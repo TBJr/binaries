@@ -45,7 +45,7 @@ function acceptLanguageFromHeaders(headers: Headers): string | null {
 /** Build full request context for audit rows (IP, UA, language, CDN hints, parsed client). */
 export function auditRequestContextFromHeaders(
   headers: Headers,
-  requestId = crypto.randomUUID(),
+  requestId: string = crypto.randomUUID(),
 ): FullAuditRequestContext {
   const userAgent = userAgentFromHeaders(headers);
   const country = headers.get("cf-ipcountry")?.trim()?.slice(0, 16) || null;
