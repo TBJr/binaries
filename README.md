@@ -75,6 +75,20 @@ npm run bootstrap:admin
 
 (`npm run admin:bootstrap` is an alias for the same script.)
 
+### Seed demo accounts
+
+The built-in account types are `user`, `viewer`, `editor`, `campaign-manager`, `admin`, and `super-admin`. Start from `server/seeds/demo-users.example.json`, replace the placeholder `.invalid` addresses, and save the file as `server/seeds/demo-users.local.json` (ignored by Git). The seeder generates a temporary password for each new account, marks it verified, requires a password change at first login, and never modifies accounts that already exist.
+
+After applying migrations, explicitly opt in when running the seeder:
+
+```powershell
+$env:SEED_DEMO_USERS = "true"
+$env:SEED_DEMO_USERS_FILE = "server/seeds/demo-users.local.json"
+npm run seed:demo-users
+```
+
+In production, also set `SEED_DEMO_USERS_CONFIRM_PRODUCTION=yes`. Run only from a trusted host with the intended production `DATABASE_URL`; generated passwords are displayed once in terminal output and must be delivered securely. The super-admin seed is refused if an active super-admin already exists. This command does not apply migrations.
+
 ## Environment variables
 
 See [`.env.example`](.env.example). Validate locally (never prints secrets):

@@ -1,0 +1,18 @@
+{
+  "users": [
+    { "email": "demo-user@example.invalid", "name": "Demo User", "role": "user" },
+    { "email": "demo-viewer@example.invalid", "name": "Demo Viewer", "role": "viewer" },
+    { "email": "demo-editor@example.invalid", "name": "Demo Editor", "role": "editor" },
+    {
+      "email": "demo-campaign-manager@example.invalid",
+      "name": "Demo Campaign Manager",
+      "role": "campaign-manager"
+    },
+    { "email": "demo-admin@example.invalid", "name": "Demo Admin", "role": "admin" },
+    {
+      "email": "demo-super-admin@example.invalid",
+      "name": "Demo Super Admin",
+      "role": "super-admin"
+    }
+  ]
+}

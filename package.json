@@ -30,6 +30,7 @@
     "db:check": "tsx server/scripts/check-database.ts",
     "db:inspect": "tsx server/scripts/inspect-database.ts",
     "db:reset": "tsx server/scripts/reset-sendstack-db.ts",
+    "seed:demo-users": "tsx server/scripts/seed-demo-users.ts",
     "bootstrap:admin": "tsx server/scripts/bootstrap-admin.ts",
     "security:request-password-rotation": "tsx server/scripts/request-password-rotation.ts",
     "admin:bootstrap": "tsx server/scripts/bootstrap-admin.ts",
