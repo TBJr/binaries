@@ -1,0 +1,32 @@
+import { DashboardStats } from "@/components/dashboard/DashboardStats";
+import { QuickActions } from "@/components/dashboard/QuickActions";
+import { QueueActivity } from "@/components/dashboard/QueueActivity";
+import { RecentCampaigns } from "@/components/dashboard/RecentCampaigns";
+import { PageMeta } from "@/components/layout/PageMeta";
+import { AppPageContainer } from "@/components/shared/AppPageContainer";
+import { PageHeader } from "@/components/shared/PageHeader";
+
+export function DashboardPage() {
+  return (
+    <>
+      <PageMeta
+        title="Dashboard | Binaries.nl"
+        description="Binaries.nl dashboard overview."
+        canonicalPath="/app/"
+      />
+      <AppPageContainer>
+        <PageHeader
+          title="Dashboard"
+          description="Manage your email campaigns and sending activity."
+          notice="Campaign queues stay simulation-only. Individual mailbox test messages are sent from Settings."
+        />
+        <DashboardStats />
+        <QuickActions />
+        <div className="grid gap-6 lg:grid-cols-2">
+          <RecentCampaigns />
+          <QueueActivity />
+        </div>
+      </AppPageContainer>
+    </>
+  );
+}

@@ -1,0 +1,889 @@
+import { createHash, randomBytes } from "node:crypto";
+
+import { and, count, desc, eq, gte, ilike, inArray, or } from "drizzle-orm";
+
+import { loadEnv } from "../env.js";
+import { auth } from "../auth/auth.js";
+import {
+  PERMISSION_DETAILS,
+  parseRoleKeys,
+  ROLE_TEMPLATES,
+  type SystemRoleKey,
+} from "../auth/permissions.js";
+import {
+  canDirectlyCreatePasswordAccount,
+  customRoleKeyError,
+  invalidPermissionKeys,
+  roleGrantError,
+  userCreatedAuditMetadata,
+  userDeleteDecision,
+} from "../auth/policy.js";
+import { AUDIT_ACTIONS } from "../lib/audit-taxonomy.js";
+import type { Database } from "../db/index.js";
+import {
+  adminAuditEvents,
+  appPermissions,
+  appRolePermissions,
+  appRoles,
+  appUserAccess,
+  appUserRoles,
+  session,
+  user,
+  userInvitations,
+} from "../db/schema.js";
+import { sendTransactionalEmail } from "../lib/email.js";
+import { validatePassword } from "../lib/password-policy.js";
+import { recordAudit } from "./audit-log.js";
+import { withPgAdvisoryLock } from "../mail/lock.js";
+import { permissionsForUser } from "./access-control.js";
+import { latestManualVerification, verificationView } from "./manual-email-verification.js";
+
+function inviteTtlMs(env: NodeJS.ProcessEnv = process.env) {
+  const hours = Number(env.USER_INVITATION_TTL_HOURS ?? "48");
+  if (!Number.isFinite(hours) || hours <= 0) return 48 * 60 * 60 * 1000;
+  return Math.min(24 * 14, hours) * 60 * 60 * 1000;
+}
+const INVITE_HOURLY_LIMIT = 10;
+
+function hashToken(token: string) {
+  return createHash("sha256").update(token).digest("hex");
+}
+
+function roleIdFor(key: string) {
+  return `role_${key}`;
+}
+
+export { recordAudit } from "./audit-log.js";
+
+async function rolePermissionMap(db: Database) {
+  const rows = await db
+    .select({ roleKey: appRoles.key, permissionKey: appPermissions.key })
+    .from(appRolePermissions)
+    .innerJoin(appRoles, eq(appRoles.id, appRolePermissions.roleId))
+    .innerJoin(appPermissions, eq(appPermissions.id, appRolePermissions.permissionId));
+  const map: Record<string, string[]> = {};
+  for (const row of rows) {
+    map[row.roleKey] ??= [];
+    map[row.roleKey]?.push(row.permissionKey);
+  }
+  for (const key of Object.keys(ROLE_TEMPLATES) as SystemRoleKey[]) {
+    if (!map[key]) map[key] = [...ROLE_TEMPLATES[key].permissions];
+  }
+  return map;
+}
+
+async function countActiveSuperAdmins(db: Database) {
+  const rows = await db.select({ id: user.id, role: user.role, banned: user.banned }).from(user);
+  const accessRows = await db.select().from(appUserAccess);
+  const access = new Map(accessRows.map((row) => [row.userId, row.status]));
+  return rows.filter((row) => {
+    const status = access.get(row.id) ?? "active";
+    return parseRoleKeys(row.role).includes("super-admin") && status === "active" && !row.banned;
+  }).length;
+}
+
+export async function listAdminUsers(
+  db: Database,
+  query: { search?: string; role?: string; status?: string; verification?: string; page: number; limit: number },
+) {
+  const filters = [];
+  if (query.search) {
+    const term = `%${query.search}%`;
+    filters.push(or(ilike(user.name, term), ilike(user.email, term)));
+  }
+  const where = filters.length ? and(...filters) : undefined;
+  const rows = await db
+    .select({
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      role: user.role,
+      banned: user.banned,
+      emailVerified: user.emailVerified,
+      createdAt: user.createdAt,
+    })
+    .from(user)
+    .where(where)
+    .orderBy(desc(user.createdAt));
+
+  const accessRows = await db.select().from(appUserAccess);
+  const access = new Map(accessRows.map((row) => [row.userId, row.status]));
+  const extraRoles = await db
+    .select({ userId: appUserRoles.userId, key: appRoles.key })
+    .from(appUserRoles)
+    .innerJoin(appRoles, eq(appRoles.id, appUserRoles.roleId));
+  const extras = new Map<string, string[]>();
+  for (const row of extraRoles) {
+    const list = extras.get(row.userId) ?? [];
+    list.push(row.key);
+    extras.set(row.userId, list);
+  }
+  const sessionRows = await db
+    .select({ userId: session.userId, updatedAt: session.updatedAt })
+    .from(session);
+  const lastSession = new Map<string, Date>();
+  for (const row of sessionRows) {
+    const current = lastSession.get(row.userId);
+    if (!current || row.updatedAt > current) lastSession.set(row.userId, row.updatedAt);
+  }
+
+  let items = rows.map((row) => {
+    const roles = [...new Set([...parseRoleKeys(row.role), ...(extras.get(row.id) ?? [])])];
+    const status = access.get(row.id) ?? (row.banned ? "suspended" : "active");
+    return {
+      id: row.id,
+      name: row.name,
+      email: row.email,
+      roles,
+      status,
+      emailVerified: row.emailVerified,
+      verificationStatus: row.emailVerified ? "verified" : "pending",
+      createdAt: row.createdAt.toISOString(),
+      lastSessionAt: lastSession.get(row.id)?.toISOString() ?? null,
+    };
+  });
+  if (query.role) items = items.filter((item) => item.roles.includes(query.role ?? ""));
+  if (query.status) items = items.filter((item) => item.status === query.status);
+  if (query.verification === "verified") items = items.filter((item) => item.emailVerified);
+  if (query.verification === "unverified") items = items.filter((item) => !item.emailVerified);
+  const total = items.length;
+  const start = (query.page - 1) * query.limit;
+  const pageItems = items.slice(start, start + query.limit);
+  const invitations = await db.select({ deliveryStatus: userInvitations.deliveryStatus, acceptedAt: userInvitations.acceptedAt, revokedAt: userInvitations.revokedAt, expiresAt: userInvitations.expiresAt }).from(userInvitations);
+  const now = Date.now();
+  const pendingInvitations = invitations.filter((row) => !row.acceptedAt && !row.revokedAt && row.expiresAt.getTime() > now).length;
+  return {
+    users: pageItems,
+    pagination: { page: query.page, limit: query.limit, total, totalPages: Math.max(1, Math.ceil(total / query.limit)) },
+    stats: {
+      total: rows.length,
+      active: items.filter((item) => item.status === "active").length,
+      suspended: items.filter((item) => item.status === "suspended").length,
+      pendingInvitations,
+    },
+  };
+}
+
+export async function getAdminUser(db: Database, userId: string) {
+  const [account] = await db
+    .select()
+    .from(user)
+    .where(eq(user.id, userId))
+    .limit(1);
+  if (!account) return null;
+  const [access] = await db.select().from(appUserAccess).where(eq(appUserAccess.userId, userId)).limit(1);
+  const extras = await db
+    .select({ key: appRoles.key, name: appRoles.name })
+    .from(appUserRoles)
+    .innerJoin(appRoles, eq(appRoles.id, appUserRoles.roleId))
+    .where(eq(appUserRoles.userId, userId));
+  const roles = [...new Set([...parseRoleKeys(account.role), ...extras.map((row) => row.key)])];
+  const permissions = [...(await permissionsForUser(db, account))].sort();
+  const sessions = await db
+    .select({
+      id: session.id,
+      createdAt: session.createdAt,
+      updatedAt: session.updatedAt,
+      expiresAt: session.expiresAt,
+      ipAddress: session.ipAddress,
+      userAgent: session.userAgent,
+    })
+    .from(session)
+    .where(eq(session.userId, userId))
+    .orderBy(desc(session.updatedAt));
+  const events = await db
+    .select()
+    .from(adminAuditEvents)
+    .where(eq(adminAuditEvents.targetUserId, userId))
+    .orderBy(desc(adminAuditEvents.createdAt))
+    .limit(20);
+  return {
+    id: account.id,
+    name: account.name,
+    email: account.email,
+    emailVerified: account.emailVerified,
+    roles,
+    status: access?.status ?? (account.banned ? "suspended" : "active"),
+    permissions,
+    createdAt: account.createdAt.toISOString(),
+    sessions: sessions.map((row) => ({
+      id: row.id,
+      createdAt: row.createdAt.toISOString(),
+      updatedAt: row.updatedAt.toISOString(),
+      expiresAt: row.expiresAt.toISOString(),
+      ipAddress: row.ipAddress,
+      userAgent: row.userAgent,
+    })),
+    audit: events.map((row) => ({
+      id: row.id,
+      action: row.action,
+      actorUserId: row.actorUserId,
+      createdAt: row.createdAt.toISOString(),
+      metadata: row.metadata ?? {},
+    })),
+    emailVerification: verificationView({
+      emailVerified: account.emailVerified,
+      email: account.email,
+      manualEvent: await latestManualVerification(db, userId),
+    }),
+  };
+}
+
+async function syncUserRoles(db: Database, userId: string, roleKeys: string[], actorId: string) {
+  const registered = new Set<string>(Object.keys(ROLE_TEMPLATES));
+  const authRoles = roleKeys.filter((key) => registered.has(key));
+  const nextAuthRole = authRoles.length > 0 ? authRoles.join(",") : "";
+  await db.update(user).set({ role: nextAuthRole, updatedAt: new Date() }).where(eq(user.id, userId));
+  await db.delete(appUserRoles).where(eq(appUserRoles.userId, userId));
+  if (roleKeys.length) {
+    await db.insert(appUserRoles).values(
+      roleKeys.map((key) => ({
+        userId,
+        roleId: roleIdFor(key),
+        assignedBy: actorId,
+      })),
+    );
+  }
+}
+
+export async function updateAdminUser(
+  db: Database,
+  actor: { id: string; role?: string | null },
+  userId: string,
+  input: { name?: string; roleKeys?: string[] },
+) {
+  return withPgAdvisoryLock(db, "sendstack-last-super-admin", async () => {
+    const [target] = await db.select().from(user).where(eq(user.id, userId)).limit(1);
+    if (!target) return { error: "User not found", status: 404 as const };
+    const actorPermissions = await permissionsForUser(db, actor);
+    const actorIsSuperAdmin = parseRoleKeys(actor.role).includes("super-admin");
+    if (input.roleKeys) {
+      const map = await rolePermissionMap(db);
+      const activeSuperAdmins = await countActiveSuperAdmins(db);
+      const [access] = await db.select().from(appUserAccess).where(eq(appUserAccess.userId, userId)).limit(1);
+      const targetIsActiveSuperAdmin =
+        parseRoleKeys(target.role).includes("super-admin") && (access?.status ?? "active") === "active" && !target.banned;
+      const grantError = roleGrantError({
+        actorIsSuperAdmin,
+        actorPermissions,
+        nextRoleKeys: input.roleKeys,
+        rolePermissions: map,
+        actorId: actor.id,
+        targetId: userId,
+        activeSuperAdmins,
+        targetIsActiveSuperAdmin,
+      });
+      if (grantError) return { error: grantError, status: 403 as const };
+      const known = await db.select({ key: appRoles.key }).from(appRoles);
+      const knownKeys = new Set(known.map((row) => row.key));
+      if (input.roleKeys.some((key) => !knownKeys.has(key))) {
+        return { error: "One or more roles do not exist.", status: 400 as const };
+      }
+      await syncUserRoles(db, userId, input.roleKeys, actor.id);
+      await recordAudit(db, {
+        actorUserId: actor.id,
+        targetUserId: userId,
+        action: "roles_assigned",
+        metadata: { roles: input.roleKeys },
+      });
+    }
+    if (input.name && input.name !== target.name) {
+      await db.update(user).set({ name: input.name, updatedAt: new Date() }).where(eq(user.id, userId));
+      await recordAudit(db, { actorUserId: actor.id, targetUserId: userId, action: "user_updated", metadata: { name: input.name } });
+    }
+    return { user: await getAdminUser(db, userId) };
+  });
+}
+
+export async function setUserStatus(
+  db: Database,
+  actor: { id: string; role?: string | null },
+  userId: string,
+  status: "active" | "suspended" | "deactivated",
+) {
+  return withPgAdvisoryLock(db, "sendstack-last-super-admin", async () => {
+    const [target] = await db.select().from(user).where(eq(user.id, userId)).limit(1);
+    if (!target) return { error: "User not found", status: 404 as const };
+    const activeSuperAdmins = await countActiveSuperAdmins(db);
+    const targetIsActiveSuperAdmin = parseRoleKeys(target.role).includes("super-admin") && !target.banned;
+    if (status !== "active" && !superAdminChangeAllowed(activeSuperAdmins, targetIsActiveSuperAdmin)) {
+      return { error: "The last active super admin cannot be suspended or deactivated.", status: 403 as const };
+    }
+    await db
+      .insert(appUserAccess)
+      .values({ userId, status, updatedAt: new Date() })
+      .onConflictDoUpdate({ target: appUserAccess.userId, set: { status, updatedAt: new Date() } });
+    await db
+      .update(user)
+      .set({
+        banned: status !== "active",
+        banReason: status === "active" ? null : status,
+        banExpires: null,
+        updatedAt: new Date(),
+      })
+      .where(eq(user.id, userId));
+    if (status !== "active") {
+      await db.delete(session).where(eq(session.userId, userId));
+    }
+    await recordAudit(db, {
+      actorUserId: actor.id,
+      targetUserId: userId,
+      action: status === "active" ? "user_reactivated" : status === "suspended" ? "user_suspended" : "user_deactivated",
+    });
+    return { user: await getAdminUser(db, userId) };
+  });
+}
+
+function superAdminChangeAllowed(activeSuperAdmins: number, targetIsActiveSuperAdmin: boolean) {
+  return !(targetIsActiveSuperAdmin && activeSuperAdmins <= 1);
+}
+
+export async function revokeUserSessions(db: Database, actorId: string, userId: string, sessionId?: string) {
+  if (sessionId) {
+    await db.delete(session).where(and(eq(session.id, sessionId), eq(session.userId, userId)));
+  } else {
+    await db.delete(session).where(eq(session.userId, userId));
+  }
+  await recordAudit(db, {
+    actorUserId: actorId,
+    targetUserId: userId,
+    action: "sessions_revoked",
+    metadata: { sessionId: sessionId ?? "all" },
+  });
+}
+
+export async function requestUserPasswordReset(db: Database, actorId: string, userId: string, headers: Headers) {
+  const [account] = await db.select().from(user).where(eq(user.id, userId)).limit(1);
+  if (!account) return { error: "User not found", status: 404 as const };
+  const env = loadEnv();
+  let delivered = false;
+  let errorMessage: string | null = null;
+  try {
+    await auth.api.requestPasswordReset({
+      body: { email: account.email, redirectTo: `${env.FRONTEND_URL}/reset-password/` },
+      headers,
+    });
+    delivered = true;
+  } catch (error) {
+    errorMessage = error instanceof Error ? "The reset email could not be sent." : "The reset email could not be sent.";
+  }
+  await recordAudit(db, {
+    actorUserId: actorId,
+    targetUserId: userId,
+    action: "password_reset_requested",
+    metadata: { delivered },
+  });
+  if (!delivered) return { error: errorMessage ?? "The reset email could not be sent.", status: 502 as const };
+  return { ok: true as const };
+}
+
+export function adminSetPasswordAuditMetadata(input: {
+  requirePasswordChange: boolean;
+  sessionsRevoked?: boolean;
+}) {
+  return {
+    method: "admin_set" as const,
+    requirePasswordChange: input.requirePasswordChange,
+    sessionsRevoked: input.sessionsRevoked ?? true,
+  };
+}
+
+export async function setAdminUserPassword(
+  db: Database,
+  actor: { id: string; role?: string | null },
+  userId: string,
+  input: { password: string; confirmPassword: string; requirePasswordChange?: boolean },
+  headers: Headers,
+) {
+  if (!canDirectlyCreatePasswordAccount(actor.role)) {
+    return { error: "Only a super admin can set account passwords.", status: 403 as const };
+  }
+
+  const passwordError = validatePassword(input.password);
+  if (passwordError) return { error: passwordError, status: 400 as const };
+  if (input.password !== input.confirmPassword) {
+    return { error: "Passwords do not match.", status: 400 as const };
+  }
+
+  const [account] = await db.select({ id: user.id }).from(user).where(eq(user.id, userId)).limit(1);
+  if (!account) return { error: "User not found", status: 404 as const };
+
+  const requirePasswordChange = input.requirePasswordChange ?? false;
+
+  try {
+    await auth.api.setUserPassword({
+      body: { userId, newPassword: input.password },
+      headers,
+    });
+  } catch {
+    await recordAudit(db, {
+      actorUserId: actor.id,
+      targetUserId: userId,
+      action: AUDIT_ACTIONS.passwordChangeFailed,
+      eventType: "password",
+      result: "failure",
+      metadata: { method: "admin_set", reason: "set_user_password_rejected" },
+    });
+    return { error: "Could not update this password.", status: 400 as const };
+  }
+
+  await db
+    .update(user)
+    .set({ mustChangePassword: requirePasswordChange, updatedAt: new Date() })
+    .where(eq(user.id, userId));
+
+  await revokeUserSessions(db, actor.id, userId);
+
+  await recordAudit(db, {
+    actorUserId: actor.id,
+    targetUserId: userId,
+    action: AUDIT_ACTIONS.passwordChanged,
+    eventType: "password",
+    result: "success",
+    metadata: adminSetPasswordAuditMetadata({ requirePasswordChange, sessionsRevoked: true }),
+  });
+
+  return { ok: true as const };
+}
+
+/**
+ * Permanently removes an account. Related rows cascade through foreign keys.
+ * Audit keeps name and email in metadata because target_user_id becomes null.
+ */
+export async function deleteAdminUser(db: Database, actorId: string, userId: string) {
+  return withPgAdvisoryLock(db, "sendstack-last-super-admin", async () => {
+    const [target] = await db.select().from(user).where(eq(user.id, userId)).limit(1);
+    const [access] = await db.select().from(appUserAccess).where(eq(appUserAccess.userId, userId)).limit(1);
+    const activeSuperAdmins = await countActiveSuperAdmins(db);
+    const targetIsActiveSuperAdmin = Boolean(
+      target &&
+        parseRoleKeys(target.role).includes("super-admin") &&
+        (access?.status ?? "active") === "active" &&
+        !target.banned,
+    );
+    const decision = userDeleteDecision({
+      actorId,
+      targetId: target?.id,
+      targetExists: Boolean(target),
+      activeSuperAdmins,
+      targetIsActiveSuperAdmin,
+    });
+    if (!decision.ok) return { error: decision.error, status: decision.status };
+    if (!target) return { error: "User not found", status: 404 as const };
+
+    await recordAudit(db, {
+      actorUserId: actorId,
+      targetUserId: userId,
+      action: AUDIT_ACTIONS.userDeleted,
+      metadata: {
+        deletedUserId: userId,
+        name: target.name,
+        email: target.email,
+        roles: parseRoleKeys(target.role),
+      },
+    });
+    await db.delete(user).where(eq(user.id, userId));
+    return { ok: true as const, deletedUserId: userId };
+  });
+}
+
+export async function listRoles(db: Database) {
+  const roles = await db.select().from(appRoles).orderBy(appRoles.name);
+  const permissionCounts = await db
+    .select({ roleId: appRolePermissions.roleId, total: count() })
+    .from(appRolePermissions)
+    .groupBy(appRolePermissions.roleId);
+  const userCounts = await db
+    .select({ roleId: appUserRoles.roleId, total: count() })
+    .from(appUserRoles)
+    .groupBy(appUserRoles.roleId);
+  const permissionMap = new Map(permissionCounts.map((row) => [row.roleId, Number(row.total)]));
+  const userMap = new Map(userCounts.map((row) => [row.roleId, Number(row.total)]));
+  return roles.map((role) => ({
+    id: role.id,
+    key: role.key,
+    name: role.name,
+    description: role.description,
+    isSystem: role.isSystem,
+    permissionCount: permissionMap.get(role.id) ?? 0,
+    userCount: userMap.get(role.id) ?? 0,
+  }));
+}
+
+export async function getRole(db: Database, roleId: string) {
+  const [role] = await db.select().from(appRoles).where(eq(appRoles.id, roleId)).limit(1);
+  if (!role) return null;
+  const permissions = await db
+    .select({ key: appPermissions.key })
+    .from(appRolePermissions)
+    .innerJoin(appPermissions, eq(appPermissions.id, appRolePermissions.permissionId))
+    .where(eq(appRolePermissions.roleId, roleId));
+  return {
+    ...role,
+    createdAt: role.createdAt.toISOString(),
+    updatedAt: role.updatedAt.toISOString(),
+    permissions: permissions.map((row) => row.key),
+  };
+}
+
+export async function saveRole(
+  db: Database,
+  actorId: string,
+  input: { id?: string; key: string; name: string; description: string; permissions: string[] },
+) {
+  const invalid = invalidPermissionKeys(input.permissions);
+  if (invalid.length) return { error: "One or more permissions are not valid.", status: 400 as const };
+  if (input.permissions.some((key) => key.startsWith("mailbox.") || key === "roles.assign" || key === "permissions.manage" || key === "users.delete")) {
+    return { error: "That permission can only be held by the super-admin role.", status: 403 as const };
+  }
+  if (!input.id) {
+    const keyError = customRoleKeyError(input.key);
+    if (keyError) return { error: keyError, status: 400 as const };
+    const id = roleIdFor(input.key);
+    await db.insert(appRoles).values({
+      id,
+      key: input.key,
+      name: input.name,
+      description: input.description,
+      isSystem: false,
+    });
+    if (input.permissions.length) {
+      await db.insert(appRolePermissions).values(input.permissions.map((permission) => ({ roleId: id, permissionId: permission })));
+    }
+    await recordAudit(db, { actorUserId: actorId, action: "role_created", metadata: { key: input.key } });
+    return { role: await getRole(db, id) };
+  }
+  const [existing] = await db.select().from(appRoles).where(eq(appRoles.id, input.id)).limit(1);
+  if (!existing) return { error: "Role not found", status: 404 as const };
+  if (existing.isSystem) return { error: "System roles cannot be edited.", status: 403 as const };
+  await db.update(appRoles).set({ name: input.name, description: input.description, updatedAt: new Date() }).where(eq(appRoles.id, input.id));
+  await db.delete(appRolePermissions).where(eq(appRolePermissions.roleId, input.id));
+  if (input.permissions.length) {
+    await db.insert(appRolePermissions).values(input.permissions.map((permission) => ({ roleId: input.id as string, permissionId: permission })));
+  }
+  await recordAudit(db, { actorUserId: actorId, action: "role_updated", metadata: { key: existing.key } });
+  return { role: await getRole(db, input.id) };
+}
+
+export async function deleteRole(db: Database, actorId: string, roleId: string) {
+  const [existing] = await db.select().from(appRoles).where(eq(appRoles.id, roleId)).limit(1);
+  if (!existing) return { error: "Role not found", status: 404 as const };
+  if (existing.isSystem) return { error: "System roles cannot be deleted.", status: 403 as const };
+  await db.delete(appRoles).where(eq(appRoles.id, roleId));
+  await recordAudit(db, { actorUserId: actorId, action: "role_deleted", metadata: { key: existing.key } });
+  return { ok: true as const };
+}
+
+async function sendInvitationEmail(input: {
+  email: string;
+  inviteeName?: string | null;
+  token: string;
+  ttlMs: number;
+}) {
+  const env = loadEnv();
+  const link = `${env.FRONTEND_URL}/invite/?token=${encodeURIComponent(input.token)}`;
+  const hours = Math.round(input.ttlMs / (60 * 60 * 1000));
+  const greeting = input.inviteeName?.trim() ? `Hello ${input.inviteeName.trim()},` : "Hello,";
+  let deliveryStatus = "sent";
+  let deliveryError: string | null = null;
+  try {
+    const result = await sendTransactionalEmail(env, {
+      to: input.email,
+      subject: `You are invited to ${env.APP_NAME}`,
+      text: `${greeting}\n\nYou have been invited to ${env.APP_NAME}.\n\nAccept the invitation: ${link}\n\nThis link expires in ${hours} hours and can be used once.`,
+    });
+    if (!result.delivered) {
+      deliveryStatus = "not_sent";
+      deliveryError = "Email delivery is not configured, so the invitation was saved but not sent.";
+    }
+  } catch {
+    deliveryStatus = "failed";
+    deliveryError = "The invitation was saved, but the email could not be sent.";
+  }
+  return { deliveryStatus, deliveryError };
+}
+
+export async function createInvitation(
+  db: Database,
+  actor: { id: string; role?: string | null },
+  input: { email: string; name?: string; roleKeys: string[] },
+) {
+  const recent = await db
+    .select({ id: userInvitations.id })
+    .from(userInvitations)
+    .where(gte(userInvitations.createdAt, new Date(Date.now() - 60 * 60 * 1000)));
+  if (recent.length >= INVITE_HOURLY_LIMIT) {
+    return { error: "Invitation sending is temporarily limited.", status: 429 as const };
+  }
+  const actorPermissions = await permissionsForUser(db, actor);
+  const map = await rolePermissionMap(db);
+  const grantError = roleGrantError({
+    actorIsSuperAdmin: parseRoleKeys(actor.role).includes("super-admin"),
+    actorPermissions,
+    nextRoleKeys: input.roleKeys,
+    rolePermissions: map,
+    actorId: actor.id,
+    targetId: "invitation",
+    activeSuperAdmins: await countActiveSuperAdmins(db),
+    targetIsActiveSuperAdmin: false,
+  });
+  if (grantError) return { error: grantError, status: 403 as const };
+  const email = input.email.trim().toLowerCase();
+  const inviteeName = input.name?.trim() || null;
+  const [existingUser] = await db.select({ id: user.id }).from(user).where(eq(user.email, email)).limit(1);
+  if (existingUser) return { error: "An account with that email already exists.", status: 409 as const };
+
+  const pending = await db.select().from(userInvitations).where(eq(userInvitations.email, email));
+  const now = Date.now();
+  const hasPending = pending.some(
+    (row) => !row.revokedAt && !row.acceptedAt && row.expiresAt.getTime() > now,
+  );
+  if (hasPending) {
+    return { error: "A pending invitation already exists for this email.", status: 409 as const };
+  }
+
+  const ttlMs = inviteTtlMs();
+  const token = randomBytes(32).toString("base64url");
+  const id = crypto.randomUUID();
+  const expiresAt = new Date(Date.now() + ttlMs);
+  await db.insert(userInvitations).values({
+    id,
+    email,
+    inviteeName,
+    roleKeys: input.roleKeys,
+    tokenHash: hashToken(token),
+    expiresAt,
+    invitedBy: actor.id,
+    deliveryStatus: "pending",
+  });
+  const { deliveryStatus, deliveryError } = await sendInvitationEmail({
+    email,
+    inviteeName,
+    token,
+    ttlMs,
+  });
+  await db.update(userInvitations).set({ deliveryStatus, deliveryError }).where(eq(userInvitations.id, id));
+  await recordAudit(db, {
+    actorUserId: actor.id,
+    action: "user_invited",
+    metadata: { email, roles: input.roleKeys, deliveryStatus, inviteeName },
+  });
+  return {
+    invitation: {
+      id,
+      email,
+      inviteeName,
+      roleKeys: input.roleKeys,
+      deliveryStatus,
+      deliveryError,
+      expiresAt: expiresAt.toISOString(),
+    },
+  };
+}
+
+export async function resendInvitation(db: Database, actorId: string, invitationId: string) {
+  const [invite] = await db.select().from(userInvitations).where(eq(userInvitations.id, invitationId)).limit(1);
+  if (!invite) return { error: "Invitation not found.", status: 404 as const };
+  if (invite.revokedAt) return { error: "This invitation has been revoked.", status: 400 as const };
+  if (invite.acceptedAt) return { error: "This invitation has already been used.", status: 400 as const };
+  if (invite.expiresAt.getTime() < Date.now()) return { error: "This invitation has expired.", status: 400 as const };
+
+  const recent = await db
+    .select({ id: userInvitations.id })
+    .from(userInvitations)
+    .where(gte(userInvitations.createdAt, new Date(Date.now() - 60 * 60 * 1000)));
+  if (recent.length >= INVITE_HOURLY_LIMIT) {
+    return { error: "Invitation sending is temporarily limited.", status: 429 as const };
+  }
+
+  const token = randomBytes(32).toString("base64url");
+  const ttlMs = inviteTtlMs();
+  const expiresAt = new Date(Date.now() + ttlMs);
+  const { deliveryStatus, deliveryError } = await sendInvitationEmail({
+    email: invite.email,
+    inviteeName: invite.inviteeName,
+    token,
+    ttlMs,
+  });
+  await db
+    .update(userInvitations)
+    .set({
+      tokenHash: hashToken(token),
+      expiresAt,
+      deliveryStatus,
+      deliveryError,
+      revokedAt: null,
+    })
+    .where(eq(userInvitations.id, invitationId));
+  await recordAudit(db, {
+    actorUserId: actorId,
+    action: "invitation_resent",
+    metadata: { invitationId, email: invite.email, deliveryStatus },
+  });
+  return {
+    invitation: {
+      id: invitationId,
+      email: invite.email,
+      deliveryStatus,
+      deliveryError,
+      expiresAt: expiresAt.toISOString(),
+    },
+  };
+}
+
+export async function listInvitations(db: Database) {
+  const rows = await db.select().from(userInvitations).orderBy(desc(userInvitations.createdAt)).limit(50);
+  const now = Date.now();
+  return rows.map((row) => ({
+    id: row.id,
+    email: row.email,
+    inviteeName: row.inviteeName,
+    roleKeys: row.roleKeys,
+    deliveryStatus: row.deliveryStatus,
+    deliveryError: row.deliveryError,
+    createdAt: row.createdAt.toISOString(),
+    expiresAt: row.expiresAt.toISOString(),
+    status: row.revokedAt ? "revoked" : row.acceptedAt ? "accepted" : row.expiresAt.getTime() < now ? "expired" : "pending",
+  }));
+}
+
+export async function revokeInvitation(db: Database, actorId: string, invitationId: string) {
+  await db.update(userInvitations).set({ revokedAt: new Date() }).where(eq(userInvitations.id, invitationId));
+  await recordAudit(db, { actorUserId: actorId, action: "invitation_revoked", metadata: { invitationId } });
+  return { ok: true as const };
+}
+
+export async function acceptInvitation(db: Database, account: { id: string; email: string; emailVerified: boolean }, token: string) {
+  const [invite] = await db.select().from(userInvitations).where(eq(userInvitations.tokenHash, hashToken(token))).limit(1);
+  if (!invite) return { error: "This invitation is not valid.", status: 400 as const };
+  if (invite.revokedAt) return { error: "This invitation has been revoked.", status: 400 as const };
+  if (invite.acceptedAt) return { error: "This invitation has already been used.", status: 400 as const };
+  if (invite.expiresAt.getTime() < Date.now()) return { error: "This invitation has expired.", status: 400 as const };
+  if (invite.email !== account.email.trim().toLowerCase()) {
+    return { error: "Sign in with the invited email address before accepting.", status: 403 as const };
+  }
+  if (!account.emailVerified) {
+    return { error: "Verify your email address before accepting the invitation.", status: 403 as const };
+  }
+  await syncUserRoles(db, account.id, invite.roleKeys, invite.invitedBy ?? account.id);
+  await db.update(userInvitations).set({ acceptedAt: new Date(), tokenHash: hashToken(randomBytes(32).toString("hex")) }).where(eq(userInvitations.id, invite.id));
+  await recordAudit(db, {
+    actorUserId: account.id,
+    targetUserId: account.id,
+    action: "invitation_accepted",
+    metadata: { roles: invite.roleKeys },
+  });
+  return { ok: true as const };
+}
+
+const DIRECT_CREATE_HOURLY_LIMIT = 10;
+
+export async function createDirectUser(
+  db: Database,
+  actor: { id: string; role?: string | null },
+  input: { name: string; email: string; password: string; confirmPassword: string; roleIds: string[]; status: "active" | "suspended" },
+  headers: Headers,
+) {
+  if (!canDirectlyCreatePasswordAccount(actor.role)) {
+    return { error: "Only a super admin can create password accounts.", status: 403 as const };
+  }
+  const passwordError = validatePassword(input.password);
+  if (passwordError) return { error: passwordError, status: 400 as const };
+  if (input.password !== input.confirmPassword) return { error: "Passwords do not match.", status: 400 as const };
+
+  const recent = await db
+    .select({ id: adminAuditEvents.id })
+    .from(adminAuditEvents)
+    .where(and(eq(adminAuditEvents.action, "user.created"), gte(adminAuditEvents.createdAt, new Date(Date.now() - 60 * 60 * 1000))));
+  if (recent.length >= DIRECT_CREATE_HOURLY_LIMIT) {
+    return { error: "Account creation is temporarily limited.", status: 429 as const };
+  }
+
+  const email = input.email.trim().toLowerCase();
+  const [existing] = await db.select({ id: user.id }).from(user).where(eq(user.email, email)).limit(1);
+  if (existing) return { error: "An account with that email already exists.", status: 409 as const };
+
+  const selected = await db.select().from(appRoles).where(inArray(appRoles.id, input.roleIds));
+  if (selected.length !== input.roleIds.length) return { error: "One or more roles do not exist.", status: 400 as const };
+  const roleKeys = selected.map((role) => role.key);
+  const actorPermissions = await permissionsForUser(db, actor);
+  const grantError = roleGrantError({
+    actorIsSuperAdmin: true,
+    actorPermissions,
+    nextRoleKeys: roleKeys,
+    rolePermissions: await rolePermissionMap(db),
+    actorId: actor.id,
+    targetId: "new-user",
+    activeSuperAdmins: await countActiveSuperAdmins(db),
+    targetIsActiveSuperAdmin: false,
+  });
+  if (grantError) return { error: grantError, status: 403 as const };
+
+  const authRoleKeys = ["user", "viewer", "editor", "campaign-manager", "admin", "super-admin"] as const;
+  const registeredKeys = roleKeys.filter((key): key is (typeof authRoleKeys)[number] =>
+    (authRoleKeys as readonly string[]).includes(key),
+  );
+  const createRole = registeredKeys.length === 0 ? "user" : registeredKeys.length === 1 ? registeredKeys[0] : registeredKeys;
+  let createdId: string | null = null;
+  try {
+    const created = await auth.api.createUser({
+      body: {
+        email,
+        name: input.name.trim(),
+        password: input.password,
+        role: createRole,
+        data: { banned: true, banReason: "provisioning" },
+      },
+      headers,
+    });
+    createdId = created.user.id;
+    await syncUserRoles(db, createdId, roleKeys, actor.id);
+    await db
+      .insert(appUserAccess)
+      .values({ userId: createdId, status: input.status, updatedAt: new Date() })
+      .onConflictDoUpdate({ target: appUserAccess.userId, set: { status: input.status, updatedAt: new Date() } });
+    if (input.status === "suspended") {
+      await db.update(user).set({ banned: true, banReason: "suspended", banExpires: null, updatedAt: new Date() }).where(eq(user.id, createdId));
+      await db.delete(session).where(eq(session.userId, createdId));
+    } else {
+      await db.update(user).set({ banned: false, banReason: null, banExpires: null, updatedAt: new Date() }).where(eq(user.id, createdId));
+    }
+    let verificationEmail: "sent" | "not_sent" = "not_sent";
+    try {
+      const env = loadEnv();
+      await auth.api.sendVerificationEmail({
+        body: { email, callbackURL: `${env.FRONTEND_URL}/verify-email/` },
+        headers,
+      });
+      verificationEmail = "sent";
+    } catch (error) {
+      console.error("[admin] verification email", error instanceof Error ? error.name : "Error");
+    }
+    await recordAudit(db, {
+      actorUserId: actor.id,
+      targetUserId: createdId,
+      action: "user.created",
+      metadata: userCreatedAuditMetadata({ roles: roleKeys, status: input.status, verificationEmail }),
+    });
+    return { user: await getAdminUser(db, createdId), verificationEmail };
+  } catch (error) {
+    if (createdId) {
+      try {
+        await auth.api.removeUser({ body: { userId: createdId }, headers });
+      } catch (cleanupError) {
+        console.error("[admin] create user cleanup", cleanupError instanceof Error ? cleanupError.name : "Error");
+        await db.update(user).set({ banned: true, banReason: "provisioning", updatedAt: new Date() }).where(eq(user.id, createdId));
+      }
+    }
+    const message = error instanceof Error ? error.message : "";
+    if (/already exists/i.test(message)) {
+      return { error: "An account with that email already exists.", status: 409 as const };
+    }
+    console.error("[admin] create user", error instanceof Error ? error.name : "Error");
+    return { error: "The account could not be created.", status: 500 as const };
+  }
+}
+
+export function listPermissionCatalog() {
+  return Object.entries(PERMISSION_DETAILS).map(([key, detail]) => ({ key, ...detail }));
+}

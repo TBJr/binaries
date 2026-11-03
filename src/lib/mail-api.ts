@@ -1,0 +1,267 @@
+export type ConnectionState = "unknown" | "connected" | "failed" | "not_configured";
+
+export type MailFolder = {
+  path: string;
+  name: string;
+  specialUse: string | null;
+  selectable: boolean;
+  messages: number | null;
+};
+
+export type MailMessageSummary = {
+  uid: number;
+  subject: string;
+  from: string;
+  to: string;
+  date: string | null;
+  seen: boolean;
+  preview: string | null;
+};
+
+export type MailPagination = {
+  page: number;
+  limit: number;
+  total: number;
+  totalPages: number;
+};
+
+export type MailMessageList = {
+  folder: MailFolder;
+  folders: MailFolder[];
+  messages: MailMessageSummary[];
+  pagination: MailPagination;
+};
+
+export type MailAttachment = {
+  name: string;
+  contentType: string;
+  size: number;
+};
+
+export type MailMessage = {
+  uid: number;
+  folder: string;
+  subject: string;
+  from: string;
+  to: string;
+  date: string | null;
+  seen: boolean;
+  text: string;
+  html: string;
+  bodyLimited: boolean;
+  attachments: MailAttachment[];
+};
+
+export type MailSubmission = {
+  id: string;
+  status: "pending" | "accepted" | "rejected" | "failed";
+  from: string;
+  to: string;
+  subject: string;
+  messageId: string | null;
+  smtpAccepted: boolean;
+  inboxDeliveryConfirmed: false;
+  sentCopyStatus: string | null;
+  errorMessage: string | null;
+  createdAt: string;
+  note: string;
+};
+
+export type MailStatus = {
+  configured: boolean;
+  accountEmail: string | null;
+  testRecipients: string[];
+  senderName: string | null;
+  outgoing: { status: ConnectionState; error: string | null };
+  incoming: { status: ConnectionState; error: string | null };
+  lastCheckedAt: string | null;
+  latestSubmission: MailSubmission | null;
+};
+
+export class MailApiError extends Error {
+  status: number;
+  code: string | null;
+  details?: unknown;
+
+  constructor(message: string, status: number, details?: unknown, code?: string | null) {
+    super(message);
+    this.name = "MailApiError";
+    this.status = status;
+    this.details = details;
+    this.code = code ?? null;
+  }
+}
+
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(path, {
+    credentials: "include",
+    headers: {
+      "Content-Type": "application/json",
+      ...(init?.headers ?? {}),
+    },
+    ...init,
+  });
+  const payload = (await response.json().catch(() => ({}))) as Record<string, unknown>;
+  if (!response.ok) {
+    const message = typeof payload.error === "string" ? payload.error : "Request failed";
+    const code = typeof payload.code === "string" ? payload.code : null;
+    throw new MailApiError(message, response.status, payload, code);
+  }
+  return payload as T;
+}
+
+export function getMailStatus() {
+  return request<MailStatus>("/api/mail/status");
+}
+
+export function testMailConnection() {
+  return request<MailStatus>("/api/mail/test-connection", { method: "POST" });
+}
+
+export type IndividualSendStatus =
+  | "pending"
+  | "submitting"
+  | "accepted"
+  | "rejected"
+  | "failed"
+  | "uncertain";
+
+export type IndividualSend = {
+  id: string;
+  status: IndividualSendStatus;
+  from: string;
+  to: string[];
+  cc: string[];
+  bccCount: number;
+  bcc: string[];
+  subject: string;
+  messageId: string | null;
+  smtpAccepted: boolean;
+  inboxDeliveryConfirmed: false;
+  sentCopyStatus: string | null;
+  errorCode: string | null;
+  errorMessage: string | null;
+  createdAt: string;
+  note: string;
+};
+
+export function sendIndividualEmail(input: {
+  senderEmail: string;
+  to: string[];
+  cc: string[];
+  bcc: string[];
+  subject: string;
+  contentJson: unknown;
+  draftId?: string | null;
+  idempotencyKey: string;
+  confirm: true;
+}) {
+  return request<{ submission: IndividualSend; duplicate?: boolean }>("/api/mail/send", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export function listIndividualSends(page = 1, limit = 10) {
+  return request<{
+    submissions: IndividualSend[];
+    pagination: { page: number; limit: number; total: number; totalPages: number };
+  }>(`/api/mail/sends?page=${page}&limit=${limit}`);
+}
+
+export type TestListOption = {
+  id: string;
+  name: string;
+  memberCount: number;
+  eligibleCount: number;
+};
+
+export type TestListSummary = {
+  listId: string;
+  listName: string;
+  requested: number;
+  eligible: number;
+  smtpAccepted: number;
+  failed: number;
+  suppressed: number;
+  skipped: number;
+  unknown: number;
+  notAttempted: number;
+  failureCategory: "authentication" | "connection" | "timeout" | "recipient" | "unknown" | null;
+  status: "completed" | "failed";
+  message: string | null;
+};
+
+export type TestListResult = {
+  email: string;
+  outcome: "smtp_accepted" | "rejected" | "failed" | "suppressed";
+};
+
+export function fetchTestLists() {
+  return request<{ lists: TestListOption[]; limit: number }>("/api/mail/test-lists");
+}
+
+export function sendMailTestList(input: {
+  subject: string;
+  text: string;
+  html?: string;
+  testListId: string;
+  confirm: true;
+  idempotencyKey: string;
+}) {
+  return request<{ summary: TestListSummary; results: TestListResult[]; duplicate: boolean }>(
+    "/api/mail/test-send",
+    {
+      method: "POST",
+      body: JSON.stringify({ ...input, recipientMode: "test_list" }),
+    },
+  );
+}
+
+export function sendMailTest(input: {
+  subject: string;
+  text: string;
+  html?: string;
+  testRecipient: string;
+  confirm: true;
+  idempotencyKey: string;
+}) {
+  return request<{ submission: MailSubmission; duplicate: boolean }>("/api/mail/test-send", {
+    method: "POST",
+    body: JSON.stringify({ ...input, recipientMode: "single" }),
+  });
+}
+
+export function listMailFolders() {
+  return request<{ folders: MailFolder[] }>("/api/mail/folders");
+}
+
+export function listInbox(page: number, limit = 25) {
+  return request<MailMessageList>(`/api/mail/inbox?page=${page}&limit=${limit}`);
+}
+
+export function listSent(page: number, limit = 25) {
+  return request<MailMessageList>(`/api/mail/sent?page=${page}&limit=${limit}`);
+}
+
+export function listMailbox(folder: string, page: number, limit = 25) {
+  const params = new URLSearchParams({
+    folder,
+    page: String(page),
+    limit: String(limit),
+  });
+  return request<MailMessageList>(`/api/mail/mailbox?${params.toString()}`);
+}
+
+export function getMailMessage(uid: string, folder: string) {
+  const params = new URLSearchParams({ folder });
+  return request<{ message: MailMessage }>(`/api/mail/messages/${uid}?${params.toString()}`);
+}
+
+export function submissionFromError(error: MailApiError) {
+  const details = error.details;
+  if (!details || typeof details !== "object" || !("submission" in details)) {
+    return null;
+  }
+  return details.submission as MailSubmission;
+}

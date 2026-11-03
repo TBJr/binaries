@@ -1,0 +1,76 @@
+/* Binaries.nl app shell — Modern Email Workspace */
+
+.app-workspace {
+  --workspace-topbar-height: 4rem;
+  --page-padding-x: 1rem;
+  --page-padding-top: 1.5rem;
+  --page-padding-bottom: max(1.5rem, env(safe-area-inset-bottom));
+  --page-section-gap: 1.5rem;
+  --page-header-gap: 0.5rem;
+  --workspace-transition: color 150ms ease, background-color 150ms ease, border-color 150ms ease,
+    box-shadow 150ms ease;
+}
+
+@media (min-width: 768px) {
+  .app-workspace {
+    --page-padding-x: 1.5rem;
+  }
+}
+
+@media (min-width: 1024px) {
+  .app-workspace {
+    --page-padding-x: 2rem;
+  }
+}
+
+.app-workspace [data-slot="sidebar-inset"] {
+  @apply md:shadow-xs;
+}
+
+.app-workspace .workspace-page-container {
+  padding-inline: var(--page-padding-x);
+  padding-top: var(--page-padding-top);
+  padding-bottom: var(--page-padding-bottom);
+  gap: var(--page-section-gap);
+}
+
+.app-workspace .workspace-page-main {
+  min-height: calc(100dvh - var(--workspace-topbar-height));
+}
+
+.app-workspace .workspace-page-title {
+  @apply text-xl font-semibold tracking-tight text-foreground sm:text-2xl;
+  line-height: 1.25;
+}
+
+.app-workspace .page-header-default .workspace-page-title {
+  margin-bottom: 0;
+}
+
+.app-workspace .workspace-panel {
+  @apply overflow-hidden rounded-xl border border-border bg-card shadow-xs;
+}
+
+.app-workspace .workspace-panel-header {
+  @apply border-b border-border px-4 py-2.5 text-xs font-medium text-muted-foreground;
+}
+
+.app-workspace .workspace-subnav {
+  @apply -mt-1 flex flex-wrap gap-2 border-b border-border pb-3;
+}
+
+.app-workspace .workspace-section-title {
+  @apply text-sm font-semibold tracking-tight text-foreground;
+}
+
+.app-workspace a,
+.app-workspace button {
+  @apply transition-[color,background-color,border-color,box-shadow,opacity] duration-150 ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-workspace a,
+  .app-workspace button {
+    transition-duration: 0.01ms;
+  }
+}
