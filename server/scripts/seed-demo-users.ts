@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { closeSync, openSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 import { eq } from "drizzle-orm";
@@ -17,6 +17,10 @@ import { withPgAdvisoryLock } from "../mail/lock.js";
 
 const env = loadEnv();
 const seedFile = process.env.SEED_DEMO_USERS_FILE?.trim();
+const credentialsFile = resolve(
+  process.env.SEED_DEMO_USERS_CREDENTIALS_FILE?.trim() ||
+    "server/seeds/demo-users.credentials.local.json",
+);
 if (process.env.SEED_DEMO_USERS !== "true") {
   console.error("Set SEED_DEMO_USERS=true to explicitly enable demo-user seeding.");
   process.exit(1);
@@ -47,6 +51,31 @@ if (!parsedSeed.success) {
   process.exit(1);
 }
 
+const credentials: Array<{
+  email: string;
+  name: string;
+  role: string;
+  temporaryPassword: string;
+  status: "pending" | "created";
+}> = [];
+let credentialsFd: number;
+try {
+  credentialsFd = openSync(credentialsFile, "wx", 0o600);
+  writeFileSync(credentialsFd, JSON.stringify({ users: credentials }, null, 2) + "\n");
+  closeSync(credentialsFd);
+} catch (error) {
+  console.error(
+    `Could not create credentials output file (it must be new): ${safeErrorLabel(error)}`,
+  );
+  process.exit(1);
+}
+
+function saveCredentials() {
+  writeFileSync(credentialsFile, JSON.stringify({ users: credentials }, null, 2) + "\n", {
+    mode: 0o600,
+  });
+}
+
 const { db, client } = createDb(env);
 let exitCode = 0;
 try {
@@ -72,24 +101,31 @@ try {
       }
 
       if (account.role === "super-admin") {
+        const password = generateTemporaryPassword();
+        credentials.push({ ...account, temporaryPassword: password, status: "pending" });
+        saveCredentials();
         const outcome = await runBootstrapAdmin({
           db,
           email: account.email,
           displayName: account.name,
           loginUrl: env.FRONTEND_URL.replace(/\/+$/, ""),
-          env: {},
+          env: { BOOTSTRAP_ADMIN_PASSWORD: password },
           signUpEmail: (body) => auth.api.signUpEmail({ body }),
         });
         if (outcome.status === "success") {
+          credentials[credentials.length - 1]!.status = "created";
+          saveCredentials();
           console.log(`Created ${outcome.role}: ${outcome.email}`);
-          console.log(`Temporary password (shown once): ${outcome.temporaryPassword}`);
-          console.log("The account must change this password at first login.");
           continue;
         }
         if (outcome.status === "skipped") {
+          credentials.pop();
+          saveCredentials();
           console.log(`Skipped existing account (super-admin): ${outcome.email}`);
           continue;
         }
+        credentials.pop();
+        saveCredentials();
         throw new Error(
           outcome.status === "refused"
             ? "Refusing to seed a super-admin while another active super-admin exists."
@@ -98,11 +134,22 @@ try {
       }
 
       const password = generateTemporaryPassword();
-      const result = await auth.api.signUpEmail({
-        body: { name: account.name, email: account.email, password },
-      });
+      credentials.push({ ...account, temporaryPassword: password, status: "pending" });
+      saveCredentials();
+      let result: Awaited<ReturnType<typeof auth.api.signUpEmail>>;
+      try {
+        result = await auth.api.signUpEmail({
+          body: { name: account.name, email: account.email, password },
+        });
+      } catch (error) {
+        credentials.pop();
+        saveCredentials();
+        throw error;
+      }
       const userId = result.user?.id;
       if (!userId) {
+        credentials.pop();
+        saveCredentials();
         throw new Error(`Better Auth did not create an account for ${account.email}.`);
       }
 
@@ -140,9 +187,9 @@ try {
         throw new Error(`Could not verify the seeded account state for ${account.email}.`);
       }
 
+      credentials[credentials.length - 1]!.status = "created";
+      saveCredentials();
       console.log(`Created ${account.role}: ${account.email}`);
-      console.log(`Temporary password (shown once): ${password}`);
-      console.log("The account must change this password at first login.");
     }
   });
 } catch (error) {
@@ -152,4 +199,5 @@ try {
   await client.end();
 }
 
+console.log(`Temporary passwords saved to ${credentialsFile}`);
 process.exit(exitCode);
