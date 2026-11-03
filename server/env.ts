@@ -32,13 +32,15 @@ const envSchema = z.object({
   BETTER_AUTH_URL: z.string().url(),
   FRONTEND_URL: z.string().url(),
   PORT: z.coerce.number().int().positive().default(3001),
-  /** console = log links in dev; smtp = send via SMTP_*; disabled = no outbound mail */
-  AUTH_EMAIL_DELIVERY: z.enum(["console", "smtp", "disabled"]).default("console"),
+  /** console = log links in dev; smtp/resend = deliver; disabled = no outbound mail */
+  AUTH_EMAIL_DELIVERY: z.enum(["console", "smtp", "resend", "disabled"]).default("console"),
   SMTP_HOST: z.string().optional(),
   SMTP_PORT: z.coerce.number().int().positive().optional(),
   SMTP_USER: z.string().optional(),
   SMTP_PASS: z.string().optional(),
   SMTP_FROM: z.string().email().optional(),
+  RESEND_API_KEY: z.string().optional(),
+  RESEND_FROM_EMAIL: z.preprocess(emptyToUndefined, z.string().email().optional()),
 });
 
 export type ServerEnv = z.infer<typeof envSchema>;

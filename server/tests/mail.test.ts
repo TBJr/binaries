@@ -17,14 +17,13 @@ const SECRET = "mailbox-secret-value";
 
 function validEnv(overrides: Record<string, string> = {}) {
   return {
-    SPACEMAIL_SMTP_HOST: "mail.spacemail.com",
-    SPACEMAIL_SMTP_PORT: "587",
-    SPACEMAIL_SMTP_SECURE: "false",
     SPACEMAIL_IMAP_HOST: "mail.spacemail.com",
     SPACEMAIL_IMAP_PORT: "993",
     SPACEMAIL_IMAP_SECURE: "true",
     SPACEMAIL_EMAIL: "mailbox@example.com",
     SPACEMAIL_PASSWORD: SECRET,
+    RESEND_API_KEY: "re_test_key",
+    RESEND_FROM_EMAIL: "sender@mail.example.com",
     SPACEMAIL_TEST_RECIPIENTS: "mailbox@example.com",
     SPACEMAIL_SENDER_NAME: "Binaries.nl",
     ...overrides,
@@ -32,37 +31,34 @@ function validEnv(overrides: Record<string, string> = {}) {
 }
 
 describe("mailbox configuration", () => {
-  it("accepts the official STARTTLS and implicit TLS combinations", () => {
-    const startTls = loadMailConfig(validEnv());
-    expect(startTls.ok).toBe(true);
-    if (startTls.ok) {
-      expect(startTls.config.smtpPort).toBe(587);
-      expect(startTls.config.smtpSecure).toBe(false);
-      expect(JSON.stringify(toPublicAccount(startTls.config))).not.toContain(SECRET);
+  it("uses Resend SMTP and keeps Spacemail for incoming mailbox access", () => {
+    const loaded = loadMailConfig(validEnv());
+    expect(loaded.ok).toBe(true);
+    if (loaded.ok) {
+      expect(loaded.config.smtpHost).toBe("smtp.resend.com");
+      expect(loaded.config.smtpPort).toBe(465);
+      expect(loaded.config.smtpSecure).toBe(true);
+      expect(loaded.config.imapHost).toBe("mail.spacemail.com");
+      expect(loaded.config.fromEmail).toBe("sender@mail.example.com");
+      expect(JSON.stringify(toPublicAccount(loaded.config))).not.toContain(SECRET);
+      expect(JSON.stringify(toPublicAccount(loaded.config))).not.toContain("re_test_key");
     }
-
-    const implicit = loadMailConfig(
-      validEnv({
-        SPACEMAIL_SMTP_PORT: "465",
-        SPACEMAIL_SMTP_SECURE: "true",
-      }),
-    );
-    expect(implicit.ok).toBe(true);
   });
 
-  it("rejects missing credentials, the wrong host, and cleartext ports", () => {
+  it("rejects missing credentials, the wrong IMAP host, and malformed sender configuration", () => {
     expect(loadMailConfig(validEnv({ SPACEMAIL_PASSWORD: "" })).ok).toBe(false);
-    expect(loadMailConfig(validEnv({ SPACEMAIL_SMTP_HOST: "smtp.example.com" }))).toEqual({
+    expect(loadMailConfig(validEnv({ SPACEMAIL_IMAP_HOST: "imap.example.com" }))).toEqual({
       ok: false,
       reason: "host",
-    });
-    expect(loadMailConfig(validEnv({ SPACEMAIL_SMTP_PORT: "25", SPACEMAIL_SMTP_SECURE: "false" }))).toEqual({
-      ok: false,
-      reason: "smtp",
     });
     expect(loadMailConfig(validEnv({ SPACEMAIL_IMAP_PORT: "143", SPACEMAIL_IMAP_SECURE: "false" }))).toEqual({
       ok: false,
       reason: "imap",
+    });
+    expect(loadMailConfig(validEnv({ RESEND_API_KEY: "" }))).toEqual({ ok: false, reason: "missing" });
+    expect(loadMailConfig(validEnv({ RESEND_FROM_EMAIL: "not-an-email" }))).toEqual({
+      ok: false,
+      reason: "invalid",
     });
   });
 
@@ -71,16 +67,22 @@ describe("mailbox configuration", () => {
     if (!loaded.ok) throw new Error("expected config");
     expect(() =>
       assertAuthorizedParties(loaded.config, {
-        from: loaded.config.email,
+        from: loaded.config.fromEmail,
         to: loaded.config.testRecipients[0]!,
       }),
     ).not.toThrow();
     expect(() =>
       assertAuthorizedParties(loaded.config, {
-        from: loaded.config.email,
+        from: loaded.config.fromEmail,
         to: "other@example.com",
       }),
     ).toThrow(/authorized test recipient/);
+    expect(() =>
+      assertAuthorizedParties(loaded.config, {
+        from: loaded.config.email,
+        to: loaded.config.testRecipients[0]!,
+      }),
+    ).toThrow(/configured sender/);
   });
 });
 

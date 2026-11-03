@@ -43,13 +43,29 @@ export async function sendTransactionalEmail(
     return { delivered: false, devOnly: true, preview };
   }
 
-  const host = env.SMTP_HOST;
-  const port = env.SMTP_PORT;
-  const user = env.SMTP_USER;
-  const pass = env.SMTP_PASS;
-  const from = env.SMTP_FROM ?? env.SMTP_USER;
-  if (!host || !port || !user || !pass || !from) {
-    throw new Error("SMTP delivery is selected but the server mail settings are incomplete.");
+  let host: string;
+  let port: number;
+  let user: string;
+  let pass: string;
+  let from: string;
+  if (env.AUTH_EMAIL_DELIVERY === "resend") {
+    host = "smtp.resend.com";
+    port = 465;
+    user = "resend";
+    pass = env.RESEND_API_KEY ?? "";
+    from = env.RESEND_FROM_EMAIL ?? "";
+    if (!pass || !from) {
+      throw new Error("Resend delivery is selected but RESEND_API_KEY or RESEND_FROM_EMAIL is missing.");
+    }
+  } else {
+    host = env.SMTP_HOST ?? "";
+    port = env.SMTP_PORT ?? 0;
+    user = env.SMTP_USER ?? "";
+    pass = env.SMTP_PASS ?? "";
+    from = env.SMTP_FROM ?? user;
+    if (!host || !port || !user || !pass || !from) {
+      throw new Error("SMTP delivery is selected but the server mail settings are incomplete.");
+    }
   }
 
   const secure = port === 465;

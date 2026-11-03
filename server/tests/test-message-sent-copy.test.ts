@@ -1,7 +1,9 @@
 import { readFileSync } from "node:fs";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const envelopes = vi.hoisted(() => [] as Array<{ envelope?: { to?: unknown }; raw?: Buffer }>);
+const envelopes = vi.hoisted(
+  () => [] as Array<{ envelope?: { from?: unknown; to?: unknown }; raw?: Buffer }>,
+);
 
 vi.mock("nodemailer", async () => {
   const actual = await vi.importActual<typeof import("nodemailer")>("nodemailer");
@@ -10,7 +12,7 @@ vi.mock("nodemailer", async () => {
     createTransport(options: { streamTransport?: boolean }) {
       if (options?.streamTransport) return actual.createTransport(options);
       return {
-        sendMail: async (mail: { envelope?: { to?: unknown }; raw?: Buffer }) => {
+        sendMail: async (mail: { envelope?: { from?: unknown; to?: unknown }; raw?: Buffer }) => {
           envelopes.push(mail);
           const to = mail.envelope?.to;
           const accepted = Array.isArray(to) ? to : typeof to === "string" ? [to] : [];
@@ -32,8 +34,10 @@ const config: MailConfig = {
   imapHost: "imap.invalid",
   imapPort: 993,
   imapSecure: true,
-  email: "sender@example.com",
+  email: "inbox@spacemail.example",
   password: "secret",
+  resendApiKey: "re_test_key",
+  fromEmail: "sender@send.example.com",
   testRecipients: ["one@example.com", "two@example.com"],
   senderName: "Kivorenta",
 };
@@ -63,6 +67,10 @@ describe("test message sent copies", () => {
 
     expect(envelopes).toHaveLength(2);
     expect(envelopes.map((entry) => entry.envelope?.to)).toEqual(["one@example.com", "two@example.com"]);
+    expect(envelopes.map((entry) => entry.envelope?.from)).toEqual([
+      "sender@send.example.com",
+      "sender@send.example.com",
+    ]);
     expect(first.messageId).not.toBe(second.messageId);
     expect(first.accepted).toBe(true);
     expect(second.accepted).toBe(true);
@@ -75,6 +83,8 @@ describe("test message sent copies", () => {
       expect(header(raw, "To").toLowerCase()).not.toContain(other);
       expect(header(raw, "Cc")).toBe("");
       expect(header(raw, "Bcc")).toBe("");
+      expect(header(raw, "From")).toContain("sender@send.example.com");
+      expect(header(raw, "Reply-To")).toBe("inbox@spacemail.example");
       expect(raw.toLowerCase()).not.toContain("list-unsubscribe");
       expect(String(entry.envelope?.to)).not.toContain(",");
     }

@@ -28,12 +28,14 @@ Never prefix secrets with `VITE_`.
 | `FRONTEND_URL` | CORS + Better Auth trusted origins base | **Required** | Vercel API, Railway | No | Same origin as `VITE_APP_URL`. Apex/www pairs added automatically for public hostnames. |
 | `BETTER_AUTH_URL` | Better Auth `baseURL` | **Required** | Vercel API, Railway | No | Must match `FRONTEND_URL` origin. Cookies use `secure` when URL is `https://`. |
 | `BETTER_AUTH_SECRET` | Session/signing secret | **Required** | Vercel API, Railway | **Yes** | ≥ 32 characters; unique per environment; rotate invalidates sessions. |
-| `AUTH_EMAIL_DELIVERY` | Auth email transport | **Required** | Vercel API, Railway | No | Production must be `smtp` (`env:check:production` rejects `console`). |
+| `AUTH_EMAIL_DELIVERY` | Auth email transport | **Required** | Vercel API, Railway | No | Production must be `smtp` or `resend` (`env:check:production` rejects `console`). |
 | `SMTP_HOST` | Auth transactional SMTP host | Required if `AUTH_EMAIL_DELIVERY=smtp` | Vercel API, Railway | No | Separate from `SPACEMAIL_*` (operational mailbox). |
 | `SMTP_PORT` | Auth SMTP port | Required if smtp | Vercel API, Railway | No | `465` (TLS) or `587` (STARTTLS) per `server/lib/email.ts`. |
 | `SMTP_USER` | Auth SMTP username | Required if smtp | Vercel API, Railway | **Yes** | |
 | `SMTP_PASS` | Auth SMTP password | Required if smtp | Vercel API, Railway | **Yes** | |
-| `SMTP_FROM` | Auth email From address | Required if smtp | Vercel API, Railway | No | Valid email; defaults to `SMTP_USER` if omitted in code. |
+| `SMTP_FROM` | Auth email From address | Required if smtp | Vercel API, Railway | No | Valid address when using a non-Resend SMTP server. |
+| `RESEND_API_KEY` | Resend SMTP credential | Required if `AUTH_EMAIL_DELIVERY=resend` or mailbox sending is used | Vercel API, Railway | **Yes** | Keep server-side only; never use a `VITE_` variable. |
+| `RESEND_FROM_EMAIL` | Verified outbound sender address | Required if Resend is used | Vercel API, Railway | No | Use an address on a domain verified in Resend, preferably a dedicated sending subdomain with SPF/DKIM configured. |
 | `DATABASE_URL` | PostgreSQL for Drizzle/Better Auth | **Required** | Shared (Vercel + Railway) | **Yes** | Neon pooled URL with `sslmode=require` for the running app. See `docs/DATABASE-CONNECTIVITY.md`. |
 | `DATABASE_POOL_MAX` | postgres.js pool size | Optional | Railway / local long-running | No | Default `10`. Ignored on Vercel, which keeps a single connection. Cap `20`. |
 | `DATABASE_CONNECT_TIMEOUT_MS` | TCP connect timeout | Optional | Shared | No | Rounded up to seconds. Default `10000` long-running, `8000` on Vercel. |
@@ -46,16 +48,13 @@ Never prefix secrets with `VITE_`.
 | `QUEUE_MAX_ATTEMPTS` | Job retry cap | Optional | Vercel API, Railway | No | Default `3`. |
 | `QUEUE_JOB_RETENTION_DAYS` | BullMQ retention | Optional | Vercel API, Railway | No | Default `7`. |
 | `QUEUE_SIMULATION_DELAY_MS` | Simulated send delay | Optional | Railway worker | No | Default `25`. |
-| `SPACEMAIL_SMTP_HOST` | Operational SMTP host | Required for mailbox features | Vercel API | No | Must be `mail.spacemail.com`. |
-| `SPACEMAIL_SMTP_PORT` | Operational SMTP port | Required for mailbox | Vercel API | No | `587` + `SPACEMAIL_SMTP_SECURE=false` or `465` + `secure=true`. |
-| `SPACEMAIL_SMTP_SECURE` | Operational SMTP TLS mode | Required for mailbox | Vercel API | No | `true` or `false` string. |
-| `SPACEMAIL_IMAP_HOST` | IMAP host | Required for mailbox | Vercel API | No | Must be `mail.spacemail.com`. |
+| `SPACEMAIL_IMAP_HOST` | Incoming mailbox IMAP host | Required for mailbox features | Vercel API | No | Must be `mail.spacemail.com`; Resend does not provide inbox/IMAP access. |
 | `SPACEMAIL_IMAP_PORT` | IMAP port | Required for mailbox | Vercel API | No | `993` with `SPACEMAIL_IMAP_SECURE=true`. |
 | `SPACEMAIL_IMAP_SECURE` | IMAP TLS | Required for mailbox | Vercel API | No | |
-| `SPACEMAIL_EMAIL` | Mailbox login / From for individual send | Required for mailbox | Vercel API | No | |
+| `SPACEMAIL_EMAIL` | Incoming mailbox login / reply-to address | Required for mailbox | Vercel API | No | Outgoing From address is `RESEND_FROM_EMAIL`. |
 | `SPACEMAIL_PASSWORD` | Mailbox password | Required for mailbox | Vercel API | **Yes** | |
 | `SPACEMAIL_SENDER_NAME` | Display name for sends | Optional | Vercel API | No | |
-| `SPACEMAIL_TEST_RECIPIENTS` | Allowlist for individual SMTP | Required when mailbox configured | Vercel API | No | Comma-separated; legacy `SPACEMAIL_TEST_RECIPIENT` supported. |
+| `SPACEMAIL_TEST_RECIPIENTS` | Allowlist for controlled test sends | Required when mailbox configured | Vercel API | No | Comma-separated; legacy `SPACEMAIL_TEST_RECIPIENT` supported. |
 | `USER_INVITATION_TTL_HOURS` | Admin invitation expiry | Optional | Vercel API | No | Default `48`. |
 | `PORT` | HTTP listen port | Optional | Railway API only | No | Default `3001`; ignored by Vercel Functions. |
 | `VERCEL` | Serverless flag | Auto | Vercel | No | Set by the platform. Forces a 1-connection pool and skips the access-control seed on the request path. |
@@ -65,6 +64,10 @@ Never prefix secrets with `VITE_`.
 | `SENDSTACK_DB_RESET_CONFIRM` | Destructive DB reset guard | Optional | Local CLI | No | Must be `yes` to run `db:reset`. |
 | `QUEUE_SIMULATION_FORCE_FAIL` | Test hook | Optional | Dev/test only | No | Do not set in production. |
 
+### Resend sending domain
+
+Verify a dedicated sending subdomain in Resend, publish the SPF/DKIM records Resend provides, and configure `RESEND_FROM_EMAIL` with an address on that verified subdomain. Use the records and status shown by Resend rather than copying DNS values from another account. A separate subdomain can isolate legitimate sending reputation; it must not be used to evade spam, abuse, or provider enforcement. Continue to send only appropriate mail to recipients with valid consent.
+
 ## Service matrix (minimum sets)
 
 ### Vercel — Production build
@@ -73,13 +76,12 @@ Never prefix secrets with `VITE_`.
 - `VITE_CONTACT_EMAIL` (optional)
 
 ### Vercel — Production serverless API (`api/index.ts`)
-
-All of **server core** from `server/env.ts`, plus queue vars if campaigns/queue UI are used, plus `SPACEMAIL_*` if SMTP/IMAP/composer features are used:
+All of **server core** from `server/env.ts`, plus queue vars if campaigns/queue UI are used, plus `RESEND_*` and `SPACEMAIL_*` if mailbox/composer features are used:
 
 - `DATABASE_URL`, `BETTER_AUTH_SECRET`, `BETTER_AUTH_URL`, `FRONTEND_URL`
-- `AUTH_EMAIL_DELIVERY`, `SMTP_*` (when smtp)
+- `AUTH_EMAIL_DELIVERY`, `RESEND_*` (when using Resend for auth mail)
 - `QUEUE_ENABLED`, `QUEUE_SIMULATION_ONLY`, `REDIS_URL`, `QUEUE_NAMESPACE`
-- `SPACEMAIL_*` (when using mailbox)
+- `RESEND_*`, `SPACEMAIL_IMAP_*`, `SPACEMAIL_EMAIL`, `SPACEMAIL_PASSWORD`, `SPACEMAIL_TEST_RECIPIENTS` (when using mailbox)
 - `APP_NAME`, `APP_COMPANY_NAME` (optional)
 
 BullMQ **workers do not run inside Vercel Functions**; enqueue/API operations use Redis from Vercel; processing runs on Railway.
@@ -89,7 +91,7 @@ BullMQ **workers do not run inside Vercel Functions**; enqueue/API operations us
 `loadEnv()` + `loadQueueEnv()` — same **shared** credentials as API:
 
 - `DATABASE_URL`, `BETTER_AUTH_SECRET`, `BETTER_AUTH_URL`, `FRONTEND_URL`
-- `AUTH_EMAIL_DELIVERY`, `SMTP_*` (if smtp — required by schema even though worker does not send auth mail)
+- `AUTH_EMAIL_DELIVERY` and its selected provider variables (required by schema even though worker does not send auth mail)
 - `QUEUE_ENABLED=true`, `QUEUE_SIMULATION_ONLY=true`, `REDIS_URL`, `QUEUE_NAMESPACE`
 - Optional queue tuning vars
 
@@ -109,7 +111,7 @@ Same as worker (no `SPACEMAIL_*` required for dispatch/simulation).
 | PostgreSQL | `postgres` driver with serverless-friendly pooling when `VERCEL` is set. |
 | Redis | Required for queue enqueue/status when `QUEUE_ENABLED=true`. |
 | IMAP | Runs in API handlers; subject to serverless timeouts (30s) — large mailboxes may need pagination limits in app code. |
-| Individual SMTP | Uses `SPACEMAIL_*`; allowlist enforced in `assertAuthorizedParties`. |
+| Individual send | Uses Resend; allowlist enforced in `assertAuthorizedParties`. |
 | Campaign send | Simulation only while `QUEUE_SIMULATION_ONLY=true` (enforced in `queueEnvSchema`). |
 
 ## Validation

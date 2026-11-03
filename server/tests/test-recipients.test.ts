@@ -8,14 +8,13 @@ import {
 import { parseTestRecipientsFromEnv } from "../mail/test-recipients.js";
 
 const BASE_MAIL = {
-  SPACEMAIL_SMTP_HOST: "mail.spacemail.com",
-  SPACEMAIL_SMTP_PORT: "587",
-  SPACEMAIL_SMTP_SECURE: "false",
   SPACEMAIL_IMAP_HOST: "mail.spacemail.com",
   SPACEMAIL_IMAP_PORT: "993",
   SPACEMAIL_IMAP_SECURE: "true",
   SPACEMAIL_EMAIL: "mailbox@example.com",
   SPACEMAIL_PASSWORD: "secret-value",
+  RESEND_API_KEY: "re_test_key",
+  RESEND_FROM_EMAIL: "sender@mail.example.com",
 };
 
 function envWithRecipients(value: string, legacy?: string) {
@@ -112,7 +111,7 @@ describe("recipient authorization", () => {
     if (!loaded.ok) throw new Error("expected config");
     for (const to of loaded.config.testRecipients) {
       expect(() =>
-        assertAuthorizedParties(loaded.config, { from: loaded.config.email, to }),
+        assertAuthorizedParties(loaded.config, { from: loaded.config.fromEmail, to }),
       ).not.toThrow();
     }
   });
@@ -122,7 +121,7 @@ describe("recipient authorization", () => {
     if (!loaded.ok) throw new Error("expected config");
     expect(() =>
       assertAuthorizedParties(loaded.config, {
-        from: loaded.config.email,
+        from: loaded.config.fromEmail,
         to: "other@example.com",
       }),
     ).toThrow(/authorized test recipient/);
@@ -133,7 +132,7 @@ describe("recipient authorization", () => {
     if (!loaded.ok) throw new Error("expected config");
     expect(() =>
       assertAllRecipientsAuthorized(loaded.config, {
-        from: loaded.config.email,
+        from: loaded.config.fromEmail,
         to: ["first@example.com", "other@example.com"],
       }),
     ).toThrow(/authorized test recipients/);

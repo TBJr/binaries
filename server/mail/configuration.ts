@@ -4,22 +4,16 @@ import { getAppName, getCompanyName } from "../lib/brand.js";
 import { MailboxError } from "./errors.js";
 import { parseTestRecipientsFromEnv } from "./test-recipients.js";
 
-/**
- * Official Spaceship Spacemail client settings:
- * host mail.spacemail.com, IMAP 993 SSL/TLS, SMTP 465 SSL/TLS or 587 STARTTLS.
- * Other hosts and cleartext ports are rejected so credentials are not sent elsewhere.
- */
-export const OFFICIAL_MAIL_HOST = "mail.spacemail.com";
+const RESEND_SMTP_HOST = "smtp.resend.com";
 
 const REQUIRED_KEYS = [
-  "SPACEMAIL_SMTP_HOST",
-  "SPACEMAIL_SMTP_PORT",
-  "SPACEMAIL_SMTP_SECURE",
   "SPACEMAIL_IMAP_HOST",
   "SPACEMAIL_IMAP_PORT",
   "SPACEMAIL_IMAP_SECURE",
   "SPACEMAIL_EMAIL",
   "SPACEMAIL_PASSWORD",
+  "RESEND_API_KEY",
+  "RESEND_FROM_EMAIL",
 ] as const;
 
 const emailField = z.preprocess(
@@ -30,15 +24,14 @@ const emailField = z.preprocess(
 const secureField = z.enum(["true", "false"]).transform((value) => value === "true");
 
 const mailEnvSchema = z.object({
-  SPACEMAIL_SMTP_HOST: z.string().trim().toLowerCase().min(1),
-  SPACEMAIL_SMTP_PORT: z.coerce.number().int().positive(),
-  SPACEMAIL_SMTP_SECURE: secureField,
   SPACEMAIL_IMAP_HOST: z.string().trim().toLowerCase().min(1),
   SPACEMAIL_IMAP_PORT: z.coerce.number().int().positive(),
   SPACEMAIL_IMAP_SECURE: secureField,
   SPACEMAIL_EMAIL: emailField,
   SPACEMAIL_PASSWORD: z.string().min(1).refine((value) => !/[\r\n]/.test(value)),
   SPACEMAIL_SENDER_NAME: z.string().optional(),
+  RESEND_API_KEY: z.string().trim().min(1).refine((value) => !/[\r\n]/.test(value)),
+  RESEND_FROM_EMAIL: emailField,
 });
 
 export type MailConfig = {
@@ -50,13 +43,15 @@ export type MailConfig = {
   imapSecure: boolean;
   email: string;
   password: string;
+  resendApiKey: string;
+  fromEmail: string;
   testRecipients: string[];
   senderName: string;
 };
 
 export type MailConfigResult =
   | { ok: true; config: MailConfig }
-  | { ok: false; reason: "missing" | "invalid" | "host" | "smtp" | "imap" | "recipients" };
+  | { ok: false; reason: "missing" | "invalid" | "host" | "imap" | "recipients" };
 
 function defaultSenderName(env: NodeJS.ProcessEnv) {
   return getCompanyName(env) || getAppName(env);
@@ -69,7 +64,7 @@ function cleanSenderName(value: string | undefined, env: NodeJS.ProcessEnv = pro
 }
 
 function mailboxCredentialsConfigured(env: NodeJS.ProcessEnv) {
-  return REQUIRED_KEYS.every((key) => (env[key] ?? "").trim().length > 0);
+  return ["SPACEMAIL_EMAIL", "SPACEMAIL_PASSWORD"].some((key) => (env[key] ?? "").trim().length > 0);
 }
 
 export function loadMailConfig(env: NodeJS.ProcessEnv = process.env): MailConfigResult {
@@ -89,15 +84,8 @@ export function loadMailConfig(env: NodeJS.ProcessEnv = process.env): MailConfig
   }
 
   const data = parsed.data;
-  if (data.SPACEMAIL_SMTP_HOST !== OFFICIAL_MAIL_HOST || data.SPACEMAIL_IMAP_HOST !== OFFICIAL_MAIL_HOST) {
+  if (data.SPACEMAIL_IMAP_HOST !== "mail.spacemail.com") {
     return { ok: false, reason: "host" };
-  }
-
-  const smtpOk =
-    (data.SPACEMAIL_SMTP_PORT === 465 && data.SPACEMAIL_SMTP_SECURE) ||
-    (data.SPACEMAIL_SMTP_PORT === 587 && !data.SPACEMAIL_SMTP_SECURE);
-  if (!smtpOk) {
-    return { ok: false, reason: "smtp" };
   }
 
   if (data.SPACEMAIL_IMAP_PORT !== 993 || !data.SPACEMAIL_IMAP_SECURE) {
@@ -107,14 +95,16 @@ export function loadMailConfig(env: NodeJS.ProcessEnv = process.env): MailConfig
   return {
     ok: true,
     config: {
-      smtpHost: data.SPACEMAIL_SMTP_HOST,
-      smtpPort: data.SPACEMAIL_SMTP_PORT,
-      smtpSecure: data.SPACEMAIL_SMTP_SECURE,
+      smtpHost: RESEND_SMTP_HOST,
+      smtpPort: 465,
+      smtpSecure: true,
       imapHost: data.SPACEMAIL_IMAP_HOST,
       imapPort: data.SPACEMAIL_IMAP_PORT,
       imapSecure: data.SPACEMAIL_IMAP_SECURE,
       email: data.SPACEMAIL_EMAIL,
       password: data.SPACEMAIL_PASSWORD,
+      resendApiKey: data.RESEND_API_KEY,
+      fromEmail: data.RESEND_FROM_EMAIL,
       testRecipients: recipientsParsed.recipients,
       senderName: cleanSenderName(data.SPACEMAIL_SENDER_NAME, env),
     },
@@ -126,21 +116,22 @@ export { mailboxCredentialsConfigured, parseTestRecipientsFromEnv };
 export function toPublicAccount(config: MailConfig) {
   return {
     accountEmail: config.email,
+    senderEmail: config.fromEmail,
     testRecipients: config.testRecipients,
     senderName: config.senderName,
   };
 }
 
 export function assertAuthorizedParties(
-  config: Pick<MailConfig, "email" | "testRecipients">,
+  config: Pick<MailConfig, "fromEmail" | "testRecipients">,
   parties: { from: string; to: string },
 ) {
   const from = parties.from.trim().toLowerCase();
   const to = parties.to.trim().toLowerCase();
   const allowlist = new Set(config.testRecipients.map((entry) => entry.toLowerCase()));
-  if (from !== config.email || !allowlist.has(to)) {
+  if (from !== config.fromEmail || !allowlist.has(to)) {
     throw new MailboxError(
-      "Only the configured mailbox can send, and only to an authorized test recipient.",
+      "Only the configured sender can send, and only to an authorized test recipient.",
       400,
       "UNAUTHORIZED_PARTY",
     );
@@ -148,13 +139,13 @@ export function assertAuthorizedParties(
 }
 
 export function assertAllRecipientsAuthorized(
-  config: Pick<MailConfig, "email" | "testRecipients">,
+  config: Pick<MailConfig, "fromEmail" | "testRecipients">,
   parties: { from: string; to: string[] },
 ) {
   const from = parties.from.trim().toLowerCase();
-  if (from !== config.email) {
+  if (from !== config.fromEmail) {
     throw new MailboxError(
-      "Only the configured mailbox can send, and only to authorized test recipients.",
+      "Only the configured sender can send, and only to authorized test recipients.",
       400,
       "UNAUTHORIZED_PARTY",
     );
@@ -164,7 +155,7 @@ export function assertAllRecipientsAuthorized(
     const normalized = recipient.trim().toLowerCase();
     if (!allowlist.has(normalized)) {
       throw new MailboxError(
-        "Only the configured mailbox can send, and only to authorized test recipients.",
+        "Only the configured sender can send, and only to authorized test recipients.",
         400,
         "UNAUTHORIZED_PARTY",
       );

@@ -2,7 +2,7 @@
 
 **Email, Organized.**
 
-A modern email management platform built with React, TypeScript, and Hono, featuring email composition, SMTP/IMAP integration, contacts, campaigns, and role-based access control.
+A modern email management platform built with React, TypeScript, and Hono, featuring email composition, Resend/IMAP integration, contacts, campaigns, and role-based access control.
 
 - **Version:** 0.1.0
 - **Status:** Independent development fork (derived from SendStack codebase; not connected to original CTN/SendStack production)
@@ -14,7 +14,7 @@ A modern email management platform built with React, TypeScript, and Hono, featu
 - Better Auth (registration, login, password reset, email verification, manual verification)
 - Roles and permissions with administrative audit log
 - Contacts, lists, CSV import, suppressions, campaigns (queue simulation — no live bulk sending by default)
-- SMTP/IMAP integration (Spacemail-compatible settings)
+- Resend outbound mail with Spacemail IMAP inbox access
 - BullMQ queue infrastructure (simulation-only guard)
 
 ## Technology stack
@@ -71,7 +71,7 @@ npm run bootstrap:admin
 - **Super-admin 2FA:** required after the grace deadline (`two_factor_enforcement_after` on `user`).
 - **Audit log:** `/app/admin/audit/` or `/app/admin/audit-logs/` (filter by action, event type, actor).
 - **User invitations:** `/app/admin/users/` — default expiry `USER_INVITATION_TTL_HOURS` (48).
-- **Transactional auth email:** set `AUTH_EMAIL_DELIVERY=smtp` and `SMTP_*` in production (`npm run env:check:production` rejects `console`).
+- **Transactional auth email:** set `AUTH_EMAIL_DELIVERY=resend`, `RESEND_API_KEY`, and `RESEND_FROM_EMAIL` in production (`npm run env:check:production` rejects `console`).
 
 (`npm run admin:bootstrap` is an alias for the same script.)
 
@@ -93,10 +93,10 @@ Key groups:
 | Group | Variables |
 | --- | --- |
 | Branding | `APP_NAME`, `APP_COMPANY_NAME`, `VITE_APP_URL`, `VITE_CONTACT_EMAIL` |
-| Auth | `BETTER_AUTH_SECRET`, `BETTER_AUTH_URL`, `FRONTEND_URL`, `AUTH_EMAIL_DELIVERY`, `SMTP_*` |
+| Auth | `BETTER_AUTH_SECRET`, `BETTER_AUTH_URL`, `FRONTEND_URL`, `AUTH_EMAIL_DELIVERY`, `RESEND_*` |
 | Database | `DATABASE_URL` |
 | Queue | `QUEUE_ENABLED`, `QUEUE_SIMULATION_ONLY`, `REDIS_URL`, `QUEUE_NAMESPACE` |
-| Mailbox | `SPACEMAIL_*`, `SPACEMAIL_TEST_RECIPIENTS` (comma-separated allowlist; legacy `SPACEMAIL_TEST_RECIPIENT`) |
+| Mailbox | `RESEND_*`, `SPACEMAIL_IMAP_*`, `SPACEMAIL_EMAIL`, `SPACEMAIL_PASSWORD`, `SPACEMAIL_TEST_RECIPIENTS` |
 
 `BETTER_AUTH_URL` and `FRONTEND_URL` must match the origin users visit. Trusted origins include apex/www pairs for public domains.
 
@@ -125,7 +125,9 @@ Queue names default to `{QUEUE_NAMESPACE}-campaign-dispatch` and `{QUEUE_NAMESPA
 ## Email configuration
 
 - **Auth emails:** `AUTH_EMAIL_DELIVERY=console` logs links in development.
-- **Operational mailbox:** configure `SPACEMAIL_*` for SMTP/IMAP features; sender display name defaults to `APP_COMPANY_NAME` or `APP_NAME`.
+- **Outbound mail:** set `RESEND_API_KEY` and a Resend-verified `RESEND_FROM_EMAIL`. Use a dedicated sending subdomain with Resend's SPF/DKIM DNS records to isolate legitimate sending reputation; this is not a way to bypass spam or abuse controls.
+- **Operational mailbox:** configure `SPACEMAIL_IMAP_*`, `SPACEMAIL_EMAIL`, and `SPACEMAIL_PASSWORD` for inbox access. Resend handles outbound messages; Spacemail remains the inbound mailbox provider. Sender display name defaults to `APP_COMPANY_NAME` or `APP_NAME`.
+- In Resend, verify your sending subdomain and publish the exact DNS records shown in its dashboard before sending. Use a valid sender on that subdomain and follow recipient-consent, unsubscribe, and provider policies.
 - Do not use original SendStack mailbox credentials in this project.
 
 ## Vercel deployment

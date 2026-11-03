@@ -73,6 +73,7 @@ export type PublicSubmission = {
 export type MailStatus = {
   configured: boolean;
   accountEmail: string | null;
+  senderEmail: string | null;
   testRecipients: string[];
   senderName: string | null;
   outgoing: { status: ConnectionState; error: string | null };

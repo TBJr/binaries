@@ -23,6 +23,7 @@ export async function getMailboxStatus(db: Database): Promise<MailStatus> {
     return {
       configured: false,
       accountEmail: null,
+      senderEmail: null,
       testRecipients: [],
       senderName: null,
       outgoing: { status: "not_configured", error: null },

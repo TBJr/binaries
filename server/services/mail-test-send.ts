@@ -146,7 +146,7 @@ export async function sendControlledTest(
       insertPendingSubmission(db, {
         userId,
         idempotencyKey: input.idempotencyKey,
-        fromAddress: config.email,
+        fromAddress: config.fromEmail,
         toAddress,
         subject: input.subject,
       }),
@@ -217,7 +217,7 @@ export async function sendControlledTest(
           error instanceof MailboxError
             ? error.message
             : "The outgoing mail server could not complete the request.";
-        console.error("[mail] test send failed", safeErrorDetails(error, [config.password]));
+        console.error("[mail] test send failed", safeErrorDetails(error, [config.resendApiKey, config.password]));
         const failed = await updateSubmission(db, pending.id, {
           status: "failed",
           sentCopyStatus: "not_attempted",

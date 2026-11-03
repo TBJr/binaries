@@ -10,9 +10,8 @@ const MAIL_KEYS = [
   "SMTP_USER",
   "SMTP_PASS",
   "SMTP_FROM",
-  "SPACEMAIL_SMTP_HOST",
-  "SPACEMAIL_SMTP_PORT",
-  "SPACEMAIL_SMTP_SECURE",
+  "RESEND_API_KEY",
+  "RESEND_FROM_EMAIL",
   "SPACEMAIL_IMAP_HOST",
   "SPACEMAIL_IMAP_PORT",
   "SPACEMAIL_IMAP_SECURE",
@@ -68,7 +67,7 @@ export function logSafeEnvironment() {
   console.info(
     `[startup] env QUEUE_SIMULATION_ONLY=${enumPresence("QUEUE_SIMULATION_ONLY", ["true", "false", "1", "0"])}`,
   );
-  const mail = MAIL_KEYS.map((key) => `${key}=${key === "AUTH_EMAIL_DELIVERY" ? enumPresence(key, ["console", "smtp", "disabled"]) : presence(key)}`).join(" ");
+  const mail = MAIL_KEYS.map((key) => `${key}=${key === "AUTH_EMAIL_DELIVERY" ? enumPresence(key, ["console", "smtp", "resend", "disabled"]) : presence(key)}`).join(" ");
   console.info(`[startup] mail ${mail}`);
 }
 

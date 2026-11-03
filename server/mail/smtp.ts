@@ -27,8 +27,8 @@ function smtpTransport(config: MailConfig) {
     secure: config.smtpSecure,
     requireTLS: !config.smtpSecure,
     auth: {
-      user: config.email,
-      pass: config.password,
+      user: "resend",
+      pass: config.resendApiKey,
     },
     forceAuth: true,
     connectionTimeout: MAIL_TIMEOUTS.connectionMs,
@@ -79,12 +79,13 @@ export async function submitComposerMessage(
     messageId: string;
   },
 ): Promise<CompiledSubmission> {
-  const from = config.email;
+  const from = config.fromEmail;
   const envelopeTo = [...new Set([...message.to, ...message.cc, ...message.bcc].map((e) => normalizeEmail(e)))];
   assertAllRecipientsAuthorized(config, { from, to: envelopeTo });
 
   const shared = {
     from: { name: config.senderName, address: from },
+    replyTo: config.email,
     to: message.to,
     cc: message.cc.length > 0 ? message.cc : undefined,
     subject: message.subject,
@@ -129,7 +130,7 @@ export async function submitComposerMessage(
       messageId: message.messageId,
       acceptedRecipients,
       rejectedRecipients,
-      response: redactSecrets(info.response ?? "", [config.password]),
+      response: redactSecrets(info.response ?? "", [config.resendApiKey]),
       raw: sentRaw,
     };
   } catch (error) {
@@ -143,12 +144,12 @@ export async function submitComposerMessage(
         rejectedRecipients: rejected,
         response: redactSecrets(
           error instanceof Error ? error.message : "The outgoing server rejected the message.",
-          [config.password],
+          [config.resendApiKey],
         ),
         raw: sentRaw,
       };
     }
-    console.error("[mail] composer smtp send failed", safeErrorDetails(error, [config.password]));
+    console.error("[mail] composer smtp send failed", safeErrorDetails(error, [config.resendApiKey]));
     if (isUncertainSmtpError(error)) {
       throw new MailboxError(
         "The outgoing server did not confirm whether it accepted the message.",
@@ -167,7 +168,7 @@ export async function verifySmtp(config: MailConfig) {
   try {
     await transport.verify();
   } catch (error) {
-    console.error("[mail] smtp verify failed", safeErrorDetails(error, [config.password]));
+    console.error("[mail] smtp verify failed", safeErrorDetails(error, [config.resendApiKey]));
     throw new MailboxError(friendlyMailError(error, "smtp"), 502, "SMTP_VERIFY_FAILED");
   } finally {
     transport.close();
@@ -186,7 +187,7 @@ export async function submitAuthorizedMessage(
   message: { subject: string; text: string; html: string; to: string },
 ): Promise<CompiledSubmission> {
   const to = normalizeEmail(message.to);
-  assertAuthorizedParties(config, { from: config.email, to });
+  assertAuthorizedParties(config, { from: config.fromEmail, to });
   return submitSingleRecipientMessage(config, { ...message, to });
 }
 
@@ -201,10 +202,11 @@ export async function submitSingleRecipientMessage(
   message: { subject: string; text: string; html: string; to: string },
 ): Promise<CompiledSubmission> {
   const to = normalizeEmail(message.to);
-  const domain = config.email.split("@")[1] ?? "localhost";
+  const domain = config.fromEmail.split("@")[1] ?? "localhost";
   const messageId = `<${crypto.randomUUID()}@${domain}>`;
   const mail: SendMailOptions = {
-    from: { name: config.senderName, address: config.email },
+    from: { name: config.senderName, address: config.fromEmail },
+    replyTo: config.email,
     to,
     subject: message.subject,
     text: message.text,
@@ -241,7 +243,7 @@ export async function submitSingleRecipientMessage(
   try {
     const info = await transport.sendMail({
       envelope: {
-        from: config.email,
+        from: config.fromEmail,
         to,
       },
       raw,
@@ -256,7 +258,7 @@ export async function submitSingleRecipientMessage(
       messageId,
       acceptedRecipients,
       rejectedRecipients,
-      response: redactSecrets(info.response ?? "", [config.password]),
+      response: redactSecrets(info.response ?? "", [config.resendApiKey]),
       raw,
     };
   } catch (error) {
@@ -270,12 +272,12 @@ export async function submitSingleRecipientMessage(
         rejectedRecipients: rejected,
         response: redactSecrets(
           error instanceof Error ? error.message : "The outgoing server rejected the message.",
-          [config.password],
+          [config.resendApiKey],
         ),
         raw,
       };
     }
-    console.error("[mail] smtp send failed", safeErrorDetails(error, [config.password]));
+    console.error("[mail] smtp send failed", safeErrorDetails(error, [config.resendApiKey]));
     throw new MailboxError(friendlyMailError(error, "smtp"), 502, "SMTP_SEND_FAILED");
   } finally {
     transport.close();

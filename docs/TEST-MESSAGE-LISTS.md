@@ -94,17 +94,17 @@ Each eligible address gets its own message:
 
 A permanent rejection for one address is stored on that submission and the loop continues. An SMTP authentication or connection failure stops the remaining addresses. Submissions already accepted stay accepted.
 
-Wording in the product is **SMTP accepted**, **Failed**, **Suppressed**, and **Skipped**. Acceptance is not inbox delivery.
+Wording in the product is **Resend accepted**, **Failed**, **Suppressed**, and **Skipped**. Acceptance is not inbox delivery.
 
 ## Idempotency
 
-The client idempotency key is unique on `test_message_operations`. Each recipient submission uses `idempotencyKey:contactId`, and migration `0011_test_list_submission_uniqueness.sql` also enforces one row per operation and contact, and one row per operation and normalized email. A concurrent insert that loses the unique constraint does not call SMTP. A row left `pending` or `unknown` after a crash is not submitted again. That recipient is reported as unknown. Start a new idempotency key only when you accept that an uncertain message might already have been accepted by Spacemail.
+The client idempotency key is unique on `test_message_operations`. Each recipient submission uses `idempotencyKey:contactId`, and migration `0011_test_list_submission_uniqueness.sql` also enforces one row per operation and contact, and one row per operation and normalized email. A concurrent insert that loses the unique constraint does not call Resend. A row left `pending` or `unknown` after a crash is not submitted again. That recipient is reported as unknown. Start a new idempotency key only when you accept that an uncertain message might already have been accepted by Resend.
 
 At the default cap, the existing test-send limit of 3 operations per hour can submit up to 24 SMTP messages (3 × 8). That limit was left unchanged.
 
 The parent idempotency key is the `test_message_operations` row. Each recipient submission uses `idempotencyKey:contactId` on `mail_submissions`.
 
-A repeated request with the same key returns the stored summary and does not submit the list again. A recipient row that already exists is not sent again. A pending or unknown row is left unknown rather than submitted a second time. A new idempotency key can submit that address again, which can duplicate a message Spacemail already accepted. This is not a universal exactly-once guarantee from the mail provider.
+A repeated request with the same key returns the stored summary and does not submit the list again. A recipient row that already exists is not sent again. A pending or unknown row is left unknown rather than submitted a second time. A new idempotency key can submit that address again, which can duplicate a message Resend already accepted. This is not a universal exactly-once guarantee from the mail provider.
 
 One test-list operation counts as one item in the existing test-send rate limit (3 per hour, 1 minute apart). The individual recipient rows do not each consume that limit.
 

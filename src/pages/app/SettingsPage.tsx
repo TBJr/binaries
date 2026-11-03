@@ -242,13 +242,13 @@ export function SettingsPage() {
     <>
       <PageMeta
         title="Mailbox | Binaries.nl"
-        description="Email account connection and a controlled test message."
+        description="Resend sending and Spacemail inbox connection with controlled test messaging."
         canonicalPath="/app/settings/"
       />
       <AppPageContainer>
         <PageHeader
           title="Mailbox"
-          description="Email account connection and one controlled test message."
+          description="Resend sending and Spacemail inbox connection with controlled test messaging."
           notice="Campaign queues stay simulation-only. This page does not send campaigns."
         />
         <SettingsSectionNav />
@@ -280,8 +280,12 @@ export function SettingsPage() {
                   <p className="text-muted-foreground">Email account</p>
                   <p className="break-all">{status.accountEmail ?? "Not configured"}</p>
                 </div>
+                <div className="space-y-1">
+                  <p className="text-muted-foreground">Resend sending address</p>
+                  <p className="break-all">{status.senderEmail ?? "Not configured"}</p>
+                </div>
                 <div className="flex flex-wrap items-center justify-between gap-3">
-                  <p className="min-w-0 wrap-break-word">Outgoing mail server</p>
+                  <p className="min-w-0 wrap-break-word">Resend outgoing service</p>
                   <Badge variant={connectionVariant(status.outgoing.status)}>
                     {connectionLabel(status.outgoing.status)}
                   </Badge>
@@ -327,7 +331,7 @@ export function SettingsPage() {
                   >
                     <div className="space-y-1 text-sm">
                       <p className="text-muted-foreground">From</p>
-                      <p>{status.accountEmail}</p>
+                      <p>{status.senderEmail}</p>
                     </div>
                     <fieldset className="space-y-2">
                       <legend className="text-sm font-medium">Recipient</legend>
@@ -483,7 +487,7 @@ export function SettingsPage() {
                   <p>{testListFollowUp(listSummary, duplicate).message}</p>
                   <p>Requested: {listSummary.requested}</p>
                   <p>Eligible: {listSummary.eligible}</p>
-                  <p>SMTP accepted: {listSummary.smtpAccepted}</p>
+                  <p>Resend accepted: {listSummary.smtpAccepted}</p>
                   <p>Failed: {listSummary.failed}</p>
                   <p>Suppressed: {listSummary.suppressed}</p>
                   <p>Skipped: {listSummary.skipped}</p>
@@ -536,8 +540,8 @@ export function SettingsPage() {
             </AlertDialogTitle>
             <AlertDialogDescription>
               {recipientMode === "test_list"
-                ? `You are about to send a real test message to ${selectedList?.eligibleCount ?? 0} recipients in “${selectedList?.name ?? "this test list"}”. Binaries.nl will submit one separate email to each recipient through the configured Spacemail SMTP account. SMTP acceptance does not confirm inbox delivery.`
-                : `This sends a single plain-text and HTML message from ${status?.accountEmail ?? "the mailbox"} to ${selectedTestRecipient}. Subject: ${subject.trim() || "(empty)"}. Acceptance by the outgoing server does not confirm inbox delivery. Campaign queues are not used.`}
+                ? `You are about to send a real test message to ${selectedList?.eligibleCount ?? 0} recipients in “${selectedList?.name ?? "this test list"}”. Binaries.nl will submit one separate email through Resend. Provider acceptance does not confirm inbox delivery.`
+                : `This sends a single plain-text and HTML message from ${status?.senderEmail ?? "the configured sender"} to ${selectedTestRecipient}. Subject: ${subject.trim() || "(empty)"}. Provider acceptance does not confirm inbox delivery. Campaign queues are not used.`}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

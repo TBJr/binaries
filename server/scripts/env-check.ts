@@ -26,12 +26,14 @@ const serverCoreSchema = z.object({
   BETTER_AUTH_SECRET: z.string().min(32),
   BETTER_AUTH_URL: z.string().url(),
   FRONTEND_URL: z.string().url(),
-  AUTH_EMAIL_DELIVERY: z.enum(["console", "smtp", "disabled"]).optional(),
+  AUTH_EMAIL_DELIVERY: z.enum(["console", "smtp", "resend", "disabled"]).optional(),
   SMTP_HOST: z.string().optional(),
   SMTP_PORT: z.coerce.number().int().positive().optional(),
   SMTP_USER: z.string().optional(),
   SMTP_PASS: z.string().optional(),
   SMTP_FROM: z.string().email().optional(),
+  RESEND_API_KEY: z.string().optional(),
+  RESEND_FROM_EMAIL: z.string().email().optional(),
   PORT: z.coerce.number().int().positive().optional(),
 });
 
@@ -79,20 +81,27 @@ function checkAuthEmail(values: Record<string, string>, production: boolean): Fi
     findings.push({
       key: "AUTH_EMAIL_DELIVERY",
       status: "INVALID",
-      detail: "Production must use AUTH_EMAIL_DELIVERY=smtp (console does not deliver mail)",
+      detail: "Production must use AUTH_EMAIL_DELIVERY=smtp or resend (console does not deliver mail)",
     });
   }
   if (production && mode === "disabled") {
     findings.push({
       key: "AUTH_EMAIL_DELIVERY",
       status: "INVALID",
-      detail: "Production requires transactional SMTP for authentication email",
+      detail: "Production requires transactional email delivery for authentication email",
     });
   }
   if (mode === "smtp") {
     for (const key of ["SMTP_HOST", "SMTP_USER", "SMTP_PASS", "SMTP_FROM"] as const) {
       if (!values[key]?.trim()) {
         findings.push({ key, status: "MISSING", detail: "Required when AUTH_EMAIL_DELIVERY=smtp" });
+      }
+    }
+  }
+  if (mode === "resend") {
+    for (const key of ["RESEND_API_KEY", "RESEND_FROM_EMAIL"] as const) {
+      if (!values[key]?.trim()) {
+        findings.push({ key, status: "MISSING", detail: "Required when AUTH_EMAIL_DELIVERY=resend" });
       }
     }
   }
@@ -175,16 +184,17 @@ function checkMailbox(values: Record<string, string>): Finding[] {
   }
 
   const hostKeys = [
-    "SPACEMAIL_SMTP_HOST",
-    "SPACEMAIL_SMTP_PORT",
-    "SPACEMAIL_SMTP_SECURE",
     "SPACEMAIL_IMAP_HOST",
     "SPACEMAIL_IMAP_PORT",
     "SPACEMAIL_IMAP_SECURE",
+    "SPACEMAIL_EMAIL",
+    "SPACEMAIL_PASSWORD",
+    "RESEND_API_KEY",
+    "RESEND_FROM_EMAIL",
   ] as const;
   for (const key of hostKeys) {
     if (!values[key]?.trim()) {
-      findings.push({ key, status: "MISSING", detail: "Required when mailbox credentials are configured" });
+      findings.push({ key, status: "MISSING", detail: "Required when mailbox features are configured" });
     }
   }
 

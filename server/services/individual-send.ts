@@ -111,13 +111,13 @@ export async function sendIndividualEmail(
   const config = loaded.config;
   const submit = deps?.submit ?? submitComposerMessage;
 
-  const sender = assessSender(input.senderEmail, config.email);
+  const sender = assessSender(input.senderEmail, config.fromEmail);
   if (!sender.ok) return { kind: "invalid", message: sender.message };
 
   if (input.draftId) {
     const draft = await getEmailDraftById(db, userId, input.draftId);
     if (!draft) return { kind: "forbidden_draft" };
-    const draftSender = assessSender(draft.senderEmail, config.email);
+    const draftSender = assessSender(draft.senderEmail, config.fromEmail);
     if (!draftSender.ok) return { kind: "invalid", message: draftSender.message };
   }
 
@@ -198,7 +198,7 @@ export async function sendIndividualEmail(
         userId,
         sourceDraftId: input.draftId ?? null,
         idempotencyKey: input.idempotencyKey,
-        senderEmail: config.email,
+        senderEmail: config.fromEmail,
         toRecipients: recipients.to,
         ccRecipients: recipients.cc,
         bccRecipients: recipients.bcc,
@@ -212,7 +212,7 @@ export async function sendIndividualEmail(
       }
     }
 
-    const messageId = row.messageId ?? messageIdFor(config.email);
+    const messageId = row.messageId ?? messageIdFor(config.fromEmail);
     const submitting = await updateIndividualSubmission(db, row.id, {
       status: "submitting",
       messageId,
@@ -269,7 +269,7 @@ export async function sendIndividualEmail(
         error instanceof MailboxError
           ? error.message
           : "The outgoing mail server could not complete the request.";
-      console.error("[mail] individual send failed", safeErrorDetails(error, [config.password]));
+      console.error("[mail] individual send failed", safeErrorDetails(error, [config.resendApiKey, config.password]));
       const status = uncertain ? "uncertain" : "failed";
       const saved = await updateIndividualSubmission(db, active.id, {
         status,

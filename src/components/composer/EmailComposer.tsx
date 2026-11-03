@@ -79,7 +79,14 @@ export function EmailComposer({
   useEffect(() => {
     if (!canSend) return;
     void getMailStatus()
-      .then((status) => setAuthorizedSender(status.accountEmail))
+      .then((status) => {
+        setAuthorizedSender(status.senderEmail);
+        setForm((current) =>
+          current.senderEmail.trim() || !status.senderEmail
+            ? current
+            : { ...current, senderEmail: status.senderEmail },
+        );
+      })
       .catch(() => undefined);
   }, [canSend]);
 
@@ -168,7 +175,7 @@ export function EmailComposer({
     setReviewOpen(true);
     if (!authorizedSender) {
       void getMailStatus()
-        .then((status) => setAuthorizedSender(status.accountEmail))
+        .then((status) => setAuthorizedSender(status.senderEmail))
         .catch(() => setAuthorizedSender(null));
     }
   };

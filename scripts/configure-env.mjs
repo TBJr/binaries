@@ -69,8 +69,10 @@ BETTER_AUTH_URL=http://localhost:5173
 FRONTEND_URL=http://localhost:5173
 BETTER_AUTH_SECRET=${devAuthSecret}
 AUTH_EMAIL_DELIVERY=console
+RESEND_API_KEY=
+RESEND_FROM_EMAIL=
 
-# Auth SMTP — set when AUTH_EMAIL_DELIVERY=smtp (SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, SMTP_FROM)
+# Set AUTH_EMAIL_DELIVERY=resend to deliver auth mail through Resend.
 
 # --- Database (Neon PostgreSQL — Binaries.nl project only) ---
 DATABASE_URL=${databaseUrl}
@@ -81,10 +83,7 @@ QUEUE_SIMULATION_ONLY=true
 QUEUE_NAMESPACE=kivorenta
 REDIS_URL=redis://127.0.0.1:6379
 
-# --- Operational mailbox (SPACEMAIL_* — fill from your provider; not SendStack/CTN) ---
-SPACEMAIL_SMTP_HOST=mail.spacemail.com
-SPACEMAIL_SMTP_PORT=587
-SPACEMAIL_SMTP_SECURE=false
+# --- Operational mailbox (Spacemail inbox access; not SendStack/CTN) ---
 SPACEMAIL_IMAP_HOST=mail.spacemail.com
 SPACEMAIL_IMAP_PORT=993
 SPACEMAIL_IMAP_SECURE=true
@@ -117,8 +116,10 @@ VITE_CONTACT_EMAIL=
 BETTER_AUTH_URL=https://YOUR_DOMAIN
 FRONTEND_URL=https://YOUR_DOMAIN
 BETTER_AUTH_SECRET=${prodAuthSecret}
-# Set to smtp once SMTP_* variables are configured in Vercel.
-AUTH_EMAIL_DELIVERY=console
+# Set to resend once RESEND_API_KEY and RESEND_FROM_EMAIL are configured.
+AUTH_EMAIL_DELIVERY=resend
+RESEND_API_KEY=
+RESEND_FROM_EMAIL=
 
 # --- Database (Neon — production branch / database for Kivorenta) ---
 DATABASE_URL=postgresql://REPLACE_WITH_BINARIES_NL_PRODUCTION_NEON?sslmode=require
@@ -130,9 +131,6 @@ QUEUE_NAMESPACE=kivorenta
 REDIS_URL=rediss://REPLACE_WITH_BINARIES_NL_UPSTASH_TCP_URL
 
 # --- Operational mailbox ---
-SPACEMAIL_SMTP_HOST=mail.spacemail.com
-SPACEMAIL_SMTP_PORT=587
-SPACEMAIL_SMTP_SECURE=false
 SPACEMAIL_IMAP_HOST=mail.spacemail.com
 SPACEMAIL_IMAP_PORT=993
 SPACEMAIL_IMAP_SECURE=true

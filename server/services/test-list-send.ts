@@ -394,7 +394,7 @@ export async function sendDesignatedTestList(
         const inserted = await insertPendingSubmission(db, {
           userId,
           idempotencyKey: submissionKey,
-          fromAddress: config.email,
+          fromAddress: config.fromEmail,
           toAddress: recipient.email,
           subject: input.subject,
           operationId: operation.id,
