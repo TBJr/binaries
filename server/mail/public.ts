@@ -72,6 +72,7 @@ export type PublicSubmission = {
 
 export type MailStatus = {
   configured: boolean;
+  provider: "resend" | "spacemail";
   accountEmail: string | null;
   senderEmail: string | null;
   testRecipients: string[];

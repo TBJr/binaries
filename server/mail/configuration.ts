@@ -6,41 +6,54 @@ import { parseTestRecipientsFromEnv } from "./test-recipients.js";
 
 const RESEND_SMTP_HOST = "smtp.resend.com";
 
-const REQUIRED_KEYS = [
-  "SPACEMAIL_IMAP_HOST",
-  "SPACEMAIL_IMAP_PORT",
-  "SPACEMAIL_IMAP_SECURE",
-  "SPACEMAIL_EMAIL",
-  "SPACEMAIL_PASSWORD",
-  "RESEND_API_KEY",
-  "RESEND_FROM_EMAIL",
-] as const;
-
 const emailField = z.preprocess(
-  (value) => (typeof value === "string" ? value.trim().toLowerCase() : value),
-  z.email(),
+  (value) => (typeof value === "string" && value.trim() ? value.trim().toLowerCase() : undefined),
+  z.email().optional(),
 );
 
 const secureField = z.enum(["true", "false"]).transform((value) => value === "true");
 
-const mailEnvSchema = z.object({
-  SPACEMAIL_IMAP_HOST: z.string().trim().toLowerCase().min(1),
-  SPACEMAIL_IMAP_PORT: z.coerce.number().int().positive(),
-  SPACEMAIL_IMAP_SECURE: secureField,
+const imapEnvSchema = z.object({
+  SPACEMAIL_IMAP_HOST: z.string().trim().toLowerCase().optional(),
+  SPACEMAIL_IMAP_PORT: z.preprocess((value) => (value === "" ? undefined : value), z.coerce.number().int().positive().optional()),
+  SPACEMAIL_IMAP_SECURE: z.preprocess((value) => (value === "" ? undefined : value), secureField.optional()),
   SPACEMAIL_EMAIL: emailField,
-  SPACEMAIL_PASSWORD: z.string().min(1).refine((value) => !/[\r\n]/.test(value)),
+  SPACEMAIL_PASSWORD: z.string().optional(),
   SPACEMAIL_SENDER_NAME: z.string().optional(),
-  RESEND_API_KEY: z.string().trim().min(1).refine((value) => !/[\r\n]/.test(value)),
-  RESEND_FROM_EMAIL: emailField,
 });
 
+const resendEnvSchema = z.object({
+  RESEND_API_KEY: z.string().trim().min(1).refine((value) => !/[\r\n]/.test(value)),
+  RESEND_FROM_EMAIL: z.preprocess(
+    (value) => (typeof value === "string" ? value.trim().toLowerCase() : value),
+    z.email(),
+  ),
+});
+
+const smtpEnvSchema = z.object({
+  SMTP_HOST: z.string().trim().min(1),
+  SMTP_PORT: z.preprocess((value) => (value === "" ? undefined : value), z.coerce.number().int().positive()),
+  SMTP_USER: z.string().trim().min(1),
+  SMTP_PASS: z.string().min(1).refine((value) => !/[\r\n]/.test(value)),
+  SMTP_FROM: z.preprocess(
+    (value) => (typeof value === "string" ? value.trim().toLowerCase() : value),
+    z.email(),
+  ),
+});
+
+export type OutboundMailProvider = "resend" | "spacemail";
+
 export type MailConfig = {
+  provider: OutboundMailProvider;
   smtpHost: string;
   smtpPort: number;
   smtpSecure: boolean;
+  smtpUser: string;
+  smtpPassword: string;
   imapHost: string;
   imapPort: number;
   imapSecure: boolean;
+  imapConfigured: boolean;
   email: string;
   password: string;
   resendApiKey: string;
@@ -52,6 +65,15 @@ export type MailConfig = {
 export type MailConfigResult =
   | { ok: true; config: MailConfig }
   | { ok: false; reason: "missing" | "invalid" | "host" | "imap" | "recipients" };
+
+export function isOutboundProviderConfigured(
+  env: NodeJS.ProcessEnv | Record<string, unknown>,
+  provider: OutboundMailProvider,
+) {
+  return provider === "resend"
+    ? resendEnvSchema.safeParse(env).success
+    : smtpEnvSchema.safeParse(env).success;
+}
 
 function defaultSenderName(env: NodeJS.ProcessEnv) {
   return getCompanyName(env) || getAppName(env);
@@ -67,46 +89,89 @@ function mailboxCredentialsConfigured(env: NodeJS.ProcessEnv) {
   return ["SPACEMAIL_EMAIL", "SPACEMAIL_PASSWORD"].some((key) => (env[key] ?? "").trim().length > 0);
 }
 
-export function loadMailConfig(env: NodeJS.ProcessEnv = process.env): MailConfigResult {
-  const missing = REQUIRED_KEYS.some((key) => !(env[key] ?? "").trim());
-  if (missing) {
-    return { ok: false, reason: "missing" };
-  }
-
-  const parsed = mailEnvSchema.safeParse(env);
-  if (!parsed.success) {
-    return { ok: false, reason: "invalid" };
-  }
-
+export function loadMailConfig(
+  env: NodeJS.ProcessEnv = process.env,
+  provider: OutboundMailProvider = env.AUTH_EMAIL_DELIVERY === "smtp" ? "spacemail" : "resend",
+): MailConfigResult {
   const recipientsParsed = parseTestRecipientsFromEnv(env);
-  if (!recipientsParsed.ok) {
+  if (!recipientsParsed.ok && recipientsParsed.reason !== "empty") {
     return { ok: false, reason: "recipients" };
   }
+  const testRecipients = recipientsParsed.ok ? recipientsParsed.recipients : [];
 
-  const data = parsed.data;
-  if (data.SPACEMAIL_IMAP_HOST !== "mail.spacemail.com") {
-    return { ok: false, reason: "host" };
+  const parsedSender = imapEnvSchema.safeParse(env);
+  const senderName = parsedSender.success
+    ? cleanSenderName(parsedSender.data.SPACEMAIL_SENDER_NAME, env)
+    : cleanSenderName(undefined, env);
+  let smtpHost: string;
+  let smtpPort: number;
+  let smtpUser: string;
+  let smtpPassword: string;
+  let fromEmail: string;
+  if (provider === "resend") {
+    if (!env.RESEND_API_KEY?.trim() || !env.RESEND_FROM_EMAIL?.trim()) {
+      return { ok: false, reason: "missing" };
+    }
+    const parsed = resendEnvSchema.safeParse(env);
+    if (!parsed.success) {
+      return { ok: false, reason: "invalid" };
+    }
+    smtpHost = RESEND_SMTP_HOST;
+    smtpPort = 465;
+    smtpUser = "resend";
+    smtpPassword = parsed.data.RESEND_API_KEY;
+    fromEmail = parsed.data.RESEND_FROM_EMAIL;
+  } else {
+    if (
+      !env.SMTP_HOST?.trim() ||
+      !env.SMTP_PORT?.trim() ||
+      !env.SMTP_USER?.trim() ||
+      !env.SMTP_PASS?.trim() ||
+      !env.SMTP_FROM?.trim()
+    ) {
+      return { ok: false, reason: "missing" };
+    }
+    const parsed = smtpEnvSchema.safeParse(env);
+    if (!parsed.success) {
+      return { ok: false, reason: "invalid" };
+    }
+    smtpHost = parsed.data.SMTP_HOST;
+    smtpPort = parsed.data.SMTP_PORT;
+    smtpUser = parsed.data.SMTP_USER;
+    smtpPassword = parsed.data.SMTP_PASS;
+    fromEmail = parsed.data.SMTP_FROM;
   }
 
-  if (data.SPACEMAIL_IMAP_PORT !== 993 || !data.SPACEMAIL_IMAP_SECURE) {
-    return { ok: false, reason: "imap" };
-  }
+  const imapConfigured = Boolean(
+    parsedSender.success &&
+      mailboxCredentialsConfigured(env) &&
+      parsedSender.data.SPACEMAIL_EMAIL &&
+      parsedSender.data.SPACEMAIL_PASSWORD &&
+      parsedSender.data.SPACEMAIL_IMAP_HOST === "mail.spacemail.com" &&
+      parsedSender.data.SPACEMAIL_IMAP_PORT === 993 &&
+      parsedSender.data.SPACEMAIL_IMAP_SECURE === true,
+  );
 
+  const imapData = parsedSender.success ? parsedSender.data : {};
   return {
     ok: true,
     config: {
-      smtpHost: RESEND_SMTP_HOST,
-      smtpPort: 465,
-      smtpSecure: true,
-      imapHost: data.SPACEMAIL_IMAP_HOST,
-      imapPort: data.SPACEMAIL_IMAP_PORT,
-      imapSecure: data.SPACEMAIL_IMAP_SECURE,
-      email: data.SPACEMAIL_EMAIL,
-      password: data.SPACEMAIL_PASSWORD,
-      resendApiKey: data.RESEND_API_KEY,
-      fromEmail: data.RESEND_FROM_EMAIL,
-      testRecipients: recipientsParsed.recipients,
-      senderName: cleanSenderName(data.SPACEMAIL_SENDER_NAME, env),
+      provider,
+      smtpHost,
+      smtpPort,
+      smtpSecure: smtpPort === 465,
+      smtpUser,
+      smtpPassword,
+      imapHost: imapData.SPACEMAIL_IMAP_HOST ?? "mail.spacemail.com",
+      imapPort: imapData.SPACEMAIL_IMAP_PORT ?? 993,
+      imapSecure: imapData.SPACEMAIL_IMAP_SECURE ?? true,
+      imapConfigured,
+      email: imapData.SPACEMAIL_EMAIL ?? fromEmail,
+      password: imapData.SPACEMAIL_PASSWORD ?? "",
+      resendApiKey: env.RESEND_API_KEY ?? "",
+      fromEmail,
+      testRecipients,
+      senderName,
     },
   };
 }
@@ -115,7 +180,7 @@ export { mailboxCredentialsConfigured, parseTestRecipientsFromEnv };
 
 export function toPublicAccount(config: MailConfig) {
   return {
-    accountEmail: config.email,
+    accountEmail: config.imapConfigured ? config.email : null,
     senderEmail: config.fromEmail,
     testRecipients: config.testRecipients,
     senderName: config.senderName,

@@ -28,12 +28,16 @@ import type { MailConfig } from "../mail/configuration.js";
 import { submitSingleRecipientMessage } from "../mail/smtp.js";
 
 const config: MailConfig = {
+  provider: "resend",
   smtpHost: "smtp.invalid",
   smtpPort: 465,
   smtpSecure: true,
+  smtpUser: "resend",
+  smtpPassword: "re_test_key",
   imapHost: "imap.invalid",
   imapPort: 993,
   imapSecure: true,
+  imapConfigured: true,
   email: "inbox@spacemail.example",
   password: "secret",
   resendApiKey: "re_test_key",

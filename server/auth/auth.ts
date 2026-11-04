@@ -12,9 +12,9 @@ import {
   isPostgresAuthenticationError,
   noteDatabaseFailure,
 } from "../lib/db-errors.js";
-import { sendTransactionalEmail } from "../lib/email.js";
 import { safeErrorLabel, safeLogText } from "../lib/startup-log.js";
 import { authTrustedOrigins } from "./origins.js";
+import { sendWithActiveMailProvider } from "../services/mail-provider.js";
 
 const env = loadEnv();
 const { db } = createDb(env);
@@ -70,7 +70,7 @@ export const auth = betterAuth({
     minPasswordLength: 8,
     requireEmailVerification: true,
     sendResetPassword: async ({ user, url }) => {
-      void sendTransactionalEmail(env, {
+      await sendWithActiveMailProvider(db, env, {
         to: user.email,
         subject: `Reset your ${appName} password`,
         text: `You requested a password reset for your ${appName} account.\n\nReset your password: ${url}\n\nIf you did not request this, you can ignore this email.`,
@@ -82,7 +82,7 @@ export const auth = betterAuth({
     sendOnSignIn: true,
     autoSignInAfterVerification: true,
     sendVerificationEmail: async ({ user, url }) => {
-      void sendTransactionalEmail(env, {
+      await sendWithActiveMailProvider(db, env, {
         to: user.email,
         subject: `Verify your ${appName} email`,
         text: `Welcome to ${appName}.\n\nVerify your email address: ${url}`,

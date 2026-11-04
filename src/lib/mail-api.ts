@@ -69,6 +69,7 @@ export type MailSubmission = {
 
 export type MailStatus = {
   configured: boolean;
+  provider: MailProvider;
   accountEmail: string | null;
   senderEmail: string | null;
   testRecipients: string[];
@@ -78,6 +79,23 @@ export type MailStatus = {
   lastCheckedAt: string | null;
   latestSubmission: MailSubmission | null;
 };
+
+export type MailProvider = "resend" | "spacemail";
+export type MailProviderSettings = {
+  provider: MailProvider;
+  availability: Record<MailProvider, boolean>;
+};
+
+export function getMailProviderSettings() {
+  return request<MailProviderSettings>("/api/mail/provider");
+}
+
+export function updateMailProvider(provider: MailProvider) {
+  return request<MailProviderSettings>("/api/mail/provider", {
+    method: "PUT",
+    body: JSON.stringify({ provider }),
+  });
+}
 
 export class MailApiError extends Error {
   status: number;

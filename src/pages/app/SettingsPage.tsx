@@ -25,12 +25,16 @@ import { AppPageContainer } from "@/components/shared/AppPageContainer";
 import { PageHeader } from "@/components/shared/PageHeader";
 import {
   fetchTestLists,
+  getMailProviderSettings,
   getMailStatus,
   MailApiError,
   sendMailTest,
   sendMailTestList,
   submissionFromError,
   testMailConnection,
+  updateMailProvider,
+  type MailProvider,
+  type MailProviderSettings,
   type ConnectionState,
   type MailStatus,
   type MailSubmission,
@@ -101,6 +105,10 @@ export function SettingsPage() {
   const [listLimit, setListLimit] = useState(8);
   const [selectedListId, setSelectedListId] = useState("");
   const [listSummary, setListSummary] = useState<TestListSummary | null>(null);
+  const [providerSettings, setProviderSettings] = useState<MailProviderSettings | null>(null);
+  const [providerSelection, setProviderSelection] = useState<MailProvider>("resend");
+  const [providerError, setProviderError] = useState<string | null>(null);
+  const [providerSaving, setProviderSaving] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -109,6 +117,17 @@ export function SettingsPage() {
         if (cancelled) return;
         setStatus(result);
         setSubmission(result.latestSubmission);
+        try {
+          const settings = await getMailProviderSettings();
+          if (!cancelled) {
+            setProviderSettings(settings);
+            setProviderSelection(settings.provider);
+          }
+        } catch (error) {
+          if (!cancelled) {
+            setProviderError(error instanceof MailApiError ? error.message : "Could not load email provider settings.");
+          }
+        }
         if (result.testRecipients.length > 0) {
           setSelectedTestRecipient((current) =>
             current && result.testRecipients.includes(current) ? current : result.testRecipients[0]!,
@@ -152,6 +171,40 @@ export function SettingsPage() {
       setTestError(error instanceof MailApiError ? error.message : "Could not test the connection.");
     } finally {
       setTesting(false);
+    }
+  }
+
+  async function saveProvider() {
+    setProviderSaving(true);
+    setProviderError(null);
+    try {
+      const updated = await updateMailProvider(providerSelection);
+      setProviderSettings(updated);
+      setProviderSelection(updated.provider);
+      setStatus((current) =>
+        current
+          ? {
+              ...current,
+              provider: updated.provider,
+              outgoing: { status: "unknown", error: null },
+              lastCheckedAt: null,
+            }
+          : current,
+      );
+      notify({
+        tone: "success",
+        message: `Outbound email now uses ${updated.provider === "resend" ? "Resend" : "Spacemail"}.`,
+        action: null,
+      });
+      try {
+        setStatus(await testMailConnection());
+      } catch (error) {
+        setTestError(error instanceof MailApiError ? error.message : "The provider was saved, but its connection test failed.");
+      }
+    } catch (error) {
+      setProviderError(error instanceof MailApiError ? error.message : "Could not update the email provider.");
+    } finally {
+      setProviderSaving(false);
     }
   }
 
@@ -242,13 +295,13 @@ export function SettingsPage() {
     <>
       <PageMeta
         title="Mailbox | Binaries.nl"
-        description="Resend sending and Spacemail inbox connection with controlled test messaging."
+        description="Configure outbound email delivery and optional Spacemail inbox access."
         canonicalPath="/app/settings/"
       />
       <AppPageContainer>
         <PageHeader
           title="Mailbox"
-          description="Resend sending and Spacemail inbox connection with controlled test messaging."
+          description="Configure outbound email delivery and optional Spacemail inbox access."
           notice="Campaign queues stay simulation-only. This page does not send campaigns."
         />
         <SettingsSectionNav />
@@ -270,6 +323,64 @@ export function SettingsPage() {
           </Card>
         ) : status ? (
           <div className="grid gap-6 lg:grid-cols-2">
+            <Card className="lg:col-span-2">
+              <CardHeader>
+                <CardTitle>Outbound email provider</CardTitle>
+                <CardDescription>
+                  This setting applies to all system email, including sign-in verification, password resets, invitations, and mailbox sends. Spacemail inbox access remains separate.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {providerSettings ? (
+                  <>
+                    <fieldset className="grid gap-3 sm:grid-cols-2">
+                      <legend className="sr-only">Choose outbound email provider</legend>
+                      {(["resend", "spacemail"] as const).map((provider) => {
+                        const configured = providerSettings.availability[provider];
+                        return (
+                          <label
+                            key={provider}
+                            className={`flex items-start gap-3 rounded-md border p-4 ${configured ? "cursor-pointer" : "cursor-not-allowed opacity-60"}`}
+                          >
+                            <input
+                              type="radio"
+                              name="outbound-provider"
+                              value={provider}
+                              checked={providerSelection === provider}
+                              disabled={!configured || providerSaving}
+                              onChange={() => setProviderSelection(provider)}
+                            />
+                            <span className="space-y-1">
+                              <span className="block font-medium">{provider === "resend" ? "Resend" : "Spacemail"}</span>
+                              <span className="block text-sm text-muted-foreground">
+                                {configured
+                                  ? "Configured and available"
+                                  : provider === "resend"
+                                    ? "Configure RESEND_API_KEY and RESEND_FROM_EMAIL in Vercel"
+                                    : "Configure SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, and SMTP_FROM in Vercel"}
+                              </span>
+                            </span>
+                          </label>
+                        );
+                      })}
+                    </fieldset>
+                    <div className="flex flex-wrap items-center gap-3">
+                      <p className="text-sm text-muted-foreground">
+                        Active provider: <strong>{providerSettings.provider === "resend" ? "Resend" : "Spacemail"}</strong>
+                      </p>
+                      <Button
+                        type="button"
+                        onClick={() => void saveProvider()}
+                        disabled={providerSaving || providerSelection === providerSettings.provider || !providerSettings.availability[providerSelection]}
+                      >
+                        {providerSaving ? "Saving…" : "Use selected provider"}
+                      </Button>
+                    </div>
+                  </>
+                ) : null}
+                {providerError ? <p className="text-sm text-destructive" role="alert">{providerError}</p> : null}
+              </CardContent>
+            </Card>
             <Card>
               <CardHeader>
                 <CardTitle>Email account</CardTitle>
@@ -285,7 +396,7 @@ export function SettingsPage() {
                   <p className="break-all">{status.senderEmail ?? "Not configured"}</p>
                 </div>
                 <div className="flex flex-wrap items-center justify-between gap-3">
-                  <p className="min-w-0 wrap-break-word">Resend outgoing service</p>
+                  <p className="min-w-0 wrap-break-word">{status.provider === "resend" ? "Resend outgoing service" : "Spacemail outgoing service"}</p>
                   <Badge variant={connectionVariant(status.outgoing.status)}>
                     {connectionLabel(status.outgoing.status)}
                   </Badge>

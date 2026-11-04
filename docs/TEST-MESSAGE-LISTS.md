@@ -39,7 +39,7 @@ Single recipient (unchanged, including requests that omit `recipientMode`):
 }
 ```
 
-The address must be on the `SPACEMAIL_TEST_RECIPIENTS` allowlist. That path does not consult contact suppressions.
+The address must be on the `MAIL_TEST_RECIPIENTS` allowlist (legacy `SPACEMAIL_TEST_RECIPIENTS` is supported). That path does not consult contact suppressions.
 
 Test list:
 

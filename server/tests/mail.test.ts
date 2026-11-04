@@ -45,16 +45,54 @@ describe("mailbox configuration", () => {
     }
   });
 
-  it("rejects missing credentials, the wrong IMAP host, and malformed sender configuration", () => {
-    expect(loadMailConfig(validEnv({ SPACEMAIL_PASSWORD: "" })).ok).toBe(false);
-    expect(loadMailConfig(validEnv({ SPACEMAIL_IMAP_HOST: "imap.example.com" }))).toEqual({
-      ok: false,
-      reason: "host",
-    });
-    expect(loadMailConfig(validEnv({ SPACEMAIL_IMAP_PORT: "143", SPACEMAIL_IMAP_SECURE: "false" }))).toEqual({
-      ok: false,
-      reason: "imap",
-    });
+  it("can send with Resend when Spacemail inbox credentials are absent", () => {
+    const loaded = loadMailConfig(
+      {
+        RESEND_API_KEY: "re_test_key",
+        RESEND_FROM_EMAIL: "sender@mail.example.com",
+      },
+      "resend",
+    );
+    expect(loaded.ok).toBe(true);
+    if (loaded.ok) {
+      expect(loaded.config.imapConfigured).toBe(false);
+      expect(loaded.config.testRecipients).toEqual([]);
+      expect(loaded.config.smtpHost).toBe("smtp.resend.com");
+      expect(loaded.config.fromEmail).toBe("sender@mail.example.com");
+    }
+  });
+
+  it("uses configured Spacemail SMTP settings when selected", () => {
+    const loaded = loadMailConfig(
+      {
+        SMTP_HOST: "smtp.example.com",
+        SMTP_PORT: "587",
+        SMTP_USER: "mailbox@example.com",
+        SMTP_PASS: "smtp-secret",
+        SMTP_FROM: "sender@example.com",
+        SPACEMAIL_TEST_RECIPIENTS: "test@example.com",
+      },
+      "spacemail",
+    );
+    expect(loaded.ok).toBe(true);
+    if (loaded.ok) {
+      expect(loaded.config.smtpHost).toBe("smtp.example.com");
+      expect(loaded.config.smtpPort).toBe(587);
+      expect(loaded.config.smtpUser).toBe("mailbox@example.com");
+      expect(loaded.config.fromEmail).toBe("sender@example.com");
+      expect(loaded.config.imapConfigured).toBe(false);
+    }
+  });
+
+  it("requires the selected provider credentials but keeps invalid optional IMAP settings isolated", () => {
+    expect(loadMailConfig(validEnv({ RESEND_API_KEY: "" })).ok).toBe(false);
+    expect(loadMailConfig(validEnv({ SPACEMAIL_PASSWORD: "" })).ok).toBe(true);
+    const wrongHost = loadMailConfig(validEnv({ SPACEMAIL_IMAP_HOST: "imap.example.com" }));
+    expect(wrongHost.ok).toBe(true);
+    if (wrongHost.ok) expect(wrongHost.config.imapConfigured).toBe(false);
+    const wrongPort = loadMailConfig(validEnv({ SPACEMAIL_IMAP_PORT: "143", SPACEMAIL_IMAP_SECURE: "false" }));
+    expect(wrongPort.ok).toBe(true);
+    if (wrongPort.ok) expect(wrongPort.config.imapConfigured).toBe(false);
     expect(loadMailConfig(validEnv({ RESEND_API_KEY: "" }))).toEqual({ ok: false, reason: "missing" });
     expect(loadMailConfig(validEnv({ RESEND_FROM_EMAIL: "not-an-email" }))).toEqual({
       ok: false,

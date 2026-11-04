@@ -101,6 +101,15 @@ describe("parseTestRecipientsFromEnv", () => {
     );
     expect(result).toEqual({ ok: true, recipients: ["plural@example.com"] });
   });
+
+  it("prefers the generic MAIL_TEST_RECIPIENTS setting", () => {
+    const result = parseTestRecipientsFromEnv({
+      ...BASE_MAIL,
+      MAIL_TEST_RECIPIENTS: "generic@example.com",
+      SPACEMAIL_TEST_RECIPIENTS: "legacy@example.com",
+    });
+    expect(result).toEqual({ ok: true, recipients: ["generic@example.com"] });
+  });
 });
 
 describe("recipient authorization", () => {
@@ -138,7 +147,9 @@ describe("recipient authorization", () => {
     ).toThrow(/authorized test recipients/);
   });
 
-  it("loadMailConfig fails when recipients are missing", () => {
-    expect(loadMailConfig({ ...BASE_MAIL })).toEqual({ ok: false, reason: "recipients" });
+  it("allows outbound mail without a test-recipient allowlist", () => {
+    const loaded = loadMailConfig({ ...BASE_MAIL, SPACEMAIL_TEST_RECIPIENTS: "" });
+    expect(loaded.ok).toBe(true);
+    if (loaded.ok) expect(loaded.config.testRecipients).toEqual([]);
   });
 });

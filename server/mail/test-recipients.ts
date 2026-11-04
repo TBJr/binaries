@@ -5,15 +5,18 @@ export type ParseTestRecipientsResult =
   | { ok: false; reason: "empty" | "invalid" };
 
 /**
- * Reads SPACEMAIL_TEST_RECIPIENTS (comma-separated) or legacy SPACEMAIL_TEST_RECIPIENT.
- * Plural takes precedence when non-empty after parsing the raw string.
+ * Reads MAIL_TEST_RECIPIENTS, then the legacy Spacemail-named settings.
+ * The generic plural setting takes precedence when non-empty.
  */
 export function parseTestRecipientsFromEnv(env: NodeJS.ProcessEnv = process.env): ParseTestRecipientsResult {
+  const genericRaw = env.MAIL_TEST_RECIPIENTS?.trim();
   const pluralRaw = env.SPACEMAIL_TEST_RECIPIENTS?.trim();
   const legacyRaw = env.SPACEMAIL_TEST_RECIPIENT?.trim();
 
   let parts: string[];
-  if (pluralRaw) {
+  if (genericRaw) {
+    parts = genericRaw.split(",");
+  } else if (pluralRaw) {
     parts = pluralRaw.split(",");
   } else if (legacyRaw) {
     parts = [legacyRaw];

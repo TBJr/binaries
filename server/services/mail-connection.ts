@@ -1,17 +1,18 @@
 import type { Database } from "../db/index.js";
-import { loadMailConfig, toPublicAccount } from "../mail/configuration.js";
+import { toPublicAccount } from "../mail/configuration.js";
 import { MailboxError } from "../mail/errors.js";
 import { verifyImap } from "../mail/imap.js";
 import type { ConnectionState, MailStatus } from "../mail/public.js";
 import { toPublicSubmission } from "../mail/public.js";
 import { verifySmtp } from "../mail/smtp.js";
 import { insertConnectionCheck, latestConnectionCheck, latestSubmission } from "./mail-records.js";
+import { loadActiveMailConfig } from "./mail-provider.js";
 
 const CONNECTION_TEST_INTERVAL_MS = 10_000;
 let lastConnectionTestAt = 0;
 
 export async function getMailboxStatus(db: Database): Promise<MailStatus> {
-  const loaded = loadMailConfig();
+  const { provider, loaded } = await loadActiveMailConfig(db);
   const [check, submission] = await Promise.all([
     latestConnectionCheck(db),
     latestSubmission(db),
@@ -22,6 +23,7 @@ export async function getMailboxStatus(db: Database): Promise<MailStatus> {
     console.error("[mail] configuration unavailable", loaded.reason);
     return {
       configured: false,
+      provider,
       accountEmail: null,
       senderEmail: null,
       testRecipients: [],
@@ -36,14 +38,17 @@ export async function getMailboxStatus(db: Database): Promise<MailStatus> {
   const account = toPublicAccount(loaded.config);
   return {
     configured: true,
+    provider,
     ...account,
     outgoing: {
       status: (check?.smtpStatus as ConnectionState | undefined) ?? "unknown",
       error: check?.smtpError ?? null,
     },
     incoming: {
-      status: (check?.imapStatus as ConnectionState | undefined) ?? "unknown",
-      error: check?.imapError ?? null,
+      status: loaded.config.imapConfigured
+        ? (check?.imapStatus as ConnectionState | undefined) ?? "unknown"
+        : "not_configured",
+      error: loaded.config.imapConfigured ? check?.imapError ?? null : null,
     },
     lastCheckedAt: check?.checkedAt.toISOString() ?? null,
     latestSubmission: latest,
@@ -51,7 +56,7 @@ export async function getMailboxStatus(db: Database): Promise<MailStatus> {
 }
 
 export async function testMailboxConnection(db: Database, userId: string) {
-  const loaded = loadMailConfig();
+  const { loaded } = await loadActiveMailConfig(db);
   if (!loaded.ok) {
     console.error("[mail] configuration unavailable", loaded.reason);
     return { kind: "not_configured" as const };
@@ -66,7 +71,7 @@ export async function testMailboxConnection(db: Database, userId: string) {
   const config = loaded.config;
   const [smtpResult, imapResult] = await Promise.allSettled([
     verifySmtp(config),
-    verifyImap(config),
+    config.imapConfigured ? verifyImap(config) : Promise.resolve(),
   ]);
 
   const smtpError =
@@ -75,8 +80,9 @@ export async function testMailboxConnection(db: Database, userId: string) {
       : smtpResult.reason instanceof MailboxError
         ? smtpResult.reason.message
         : "The outgoing mail server could not complete the request.";
-  const imapError =
-    imapResult.status === "fulfilled"
+  const imapError = !config.imapConfigured
+    ? null
+    : imapResult.status === "fulfilled"
       ? null
       : imapResult.reason instanceof MailboxError
         ? imapResult.reason.message
@@ -85,7 +91,7 @@ export async function testMailboxConnection(db: Database, userId: string) {
   await insertConnectionCheck(db, {
     userId,
     smtpStatus: smtpError ? "failed" : "connected",
-    imapStatus: imapError ? "failed" : "connected",
+    imapStatus: !config.imapConfigured ? "not_configured" : imapError ? "failed" : "connected",
     smtpError,
     imapError,
   });

@@ -387,6 +387,9 @@ export async function saveSentCopy(
   messageId: string,
   lock: MailLock,
 ) {
+  if (!config.imapConfigured) {
+    return { status: "not_configured" as const, errorMessage: null };
+  }
   try {
     return await lock(() =>
       withImap(config, async (client) => {

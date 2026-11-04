@@ -27,8 +27,8 @@ function smtpTransport(config: MailConfig) {
     secure: config.smtpSecure,
     requireTLS: !config.smtpSecure,
     auth: {
-      user: "resend",
-      pass: config.resendApiKey,
+      user: config.smtpUser,
+      pass: config.smtpPassword,
     },
     forceAuth: true,
     connectionTimeout: MAIL_TIMEOUTS.connectionMs,
@@ -144,12 +144,12 @@ export async function submitComposerMessage(
         rejectedRecipients: rejected,
         response: redactSecrets(
           error instanceof Error ? error.message : "The outgoing server rejected the message.",
-          [config.resendApiKey],
+          [config.smtpPassword],
         ),
         raw: sentRaw,
       };
     }
-    console.error("[mail] composer smtp send failed", safeErrorDetails(error, [config.resendApiKey]));
+    console.error("[mail] composer smtp send failed", safeErrorDetails(error, [config.smtpPassword]));
     if (isUncertainSmtpError(error)) {
       throw new MailboxError(
         "The outgoing server did not confirm whether it accepted the message.",
@@ -168,7 +168,7 @@ export async function verifySmtp(config: MailConfig) {
   try {
     await transport.verify();
   } catch (error) {
-    console.error("[mail] smtp verify failed", safeErrorDetails(error, [config.resendApiKey]));
+    console.error("[mail] smtp verify failed", safeErrorDetails(error, [config.smtpPassword]));
     throw new MailboxError(friendlyMailError(error, "smtp"), 502, "SMTP_VERIFY_FAILED");
   } finally {
     transport.close();

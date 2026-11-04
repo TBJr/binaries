@@ -31,7 +31,7 @@ import {
   user,
   userInvitations,
 } from "../db/schema.js";
-import { sendTransactionalEmail } from "../lib/email.js";
+import { sendWithActiveMailProvider } from "./mail-provider.js";
 import { validatePassword } from "../lib/password-policy.js";
 import { recordAudit } from "./audit-log.js";
 import { withPgAdvisoryLock } from "../mail/lock.js";
@@ -574,7 +574,7 @@ export async function deleteRole(db: Database, actorId: string, roleId: string) 
   return { ok: true as const };
 }
 
-async function sendInvitationEmail(input: {
+async function sendInvitationEmail(db: Database, input: {
   email: string;
   inviteeName?: string | null;
   token: string;
@@ -587,7 +587,7 @@ async function sendInvitationEmail(input: {
   let deliveryStatus = "sent";
   let deliveryError: string | null = null;
   try {
-    const result = await sendTransactionalEmail(env, {
+    const result = await sendWithActiveMailProvider(db, env, {
       to: input.email,
       subject: `You are invited to ${env.APP_NAME}`,
       text: `${greeting}\n\nYou have been invited to ${env.APP_NAME}.\n\nAccept the invitation: ${link}\n\nThis link expires in ${hours} hours and can be used once.`,
@@ -656,7 +656,7 @@ export async function createInvitation(
     invitedBy: actor.id,
     deliveryStatus: "pending",
   });
-  const { deliveryStatus, deliveryError } = await sendInvitationEmail({
+  const { deliveryStatus, deliveryError } = await sendInvitationEmail(db, {
     email,
     inviteeName,
     token,
@@ -699,7 +699,7 @@ export async function resendInvitation(db: Database, actorId: string, invitation
   const token = randomBytes(32).toString("base64url");
   const ttlMs = inviteTtlMs();
   const expiresAt = new Date(Date.now() + ttlMs);
-  const { deliveryStatus, deliveryError } = await sendInvitationEmail({
+  const { deliveryStatus, deliveryError } = await sendInvitationEmail(db, {
     email: invite.email,
     inviteeName: invite.inviteeName,
     token,

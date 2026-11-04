@@ -1,6 +1,7 @@
 import { sql } from "drizzle-orm";
 import {
   boolean,
+  check,
   index,
   integer,
   jsonb,
@@ -662,4 +663,15 @@ export const signupCodes = pgTable(
     index("signup_codes_created_by_created_at_idx").on(table.createdBy, table.createdAt),
     index("signup_codes_expires_at_idx").on(table.expiresAt),
   ],
+);
+
+export const mailDeliverySettings = pgTable(
+  "mail_delivery_settings",
+  {
+    id: text("id").primaryKey(),
+    provider: text("provider").notNull().default("resend"),
+    updatedBy: text("updated_by").references(() => user.id, { onDelete: "set null" }),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (table) => [check("mail_delivery_settings_provider_check", sql`${table.provider} in ('resend', 'spacemail')`)],
 );

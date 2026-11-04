@@ -6,7 +6,6 @@ import { getEmailDraftById } from "./drafts.js";
 import { processDraftContent } from "../lib/email-content.js";
 import { normalizeEmail } from "../lib/email-normalization.js";
 import type { MailConfig } from "../mail/configuration.js";
-import { loadMailConfig } from "../mail/configuration.js";
 import {
   assessDirectRecipients,
   assessSender,
@@ -27,6 +26,7 @@ import {
   updateIndividualSubmission,
   type IndividualSubmissionRow,
 } from "./individual-send-records.js";
+import { loadActiveMailConfig } from "./mail-provider.js";
 
 export type IndividualSendInput = {
   senderEmail: string;
@@ -106,7 +106,7 @@ export async function sendIndividualEmail(
   input: IndividualSendInput,
   deps?: { submit?: Submit; recipientOwnerId?: string },
 ): Promise<IndividualSendOutcome> {
-  const loaded = loadMailConfig();
+  const { loaded } = await loadActiveMailConfig(db);
   if (!loaded.ok) return { kind: "not_configured" };
   const config = loaded.config;
   const submit = deps?.submit ?? submitComposerMessage;
@@ -269,7 +269,7 @@ export async function sendIndividualEmail(
         error instanceof MailboxError
           ? error.message
           : "The outgoing mail server could not complete the request.";
-      console.error("[mail] individual send failed", safeErrorDetails(error, [config.resendApiKey, config.password]));
+      console.error("[mail] individual send failed", safeErrorDetails(error, [config.smtpPassword, config.password]));
       const status = uncertain ? "uncertain" : "failed";
       const saved = await updateIndividualSubmission(db, active.id, {
         status,

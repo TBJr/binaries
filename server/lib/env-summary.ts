@@ -20,6 +20,7 @@ const MAIL_KEYS = [
   "SPACEMAIL_SENDER_NAME",
   "SPACEMAIL_TEST_RECIPIENTS",
   "SPACEMAIL_TEST_RECIPIENT",
+  "MAIL_TEST_RECIPIENTS",
 ] as const;
 
 let logged = false;

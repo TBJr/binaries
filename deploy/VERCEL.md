@@ -20,7 +20,9 @@ Use `.env.production` as the source for the Vercel project's **Production** envi
 - [ ] `REDIS_URL` (`rediss://…` Upstash TCP/TLS — not REST)
 - [ ] `QUEUE_ENABLED`, `QUEUE_SIMULATION_ONLY=true`, `QUEUE_NAMESPACE`
 - [ ] `AUTH_EMAIL_DELIVERY` and the matching provider credentials (`RESEND_API_KEY` + `RESEND_FROM_EMAIL` for Resend, or `SMTP_*` for SMTP)
-- [ ] `SPACEMAIL_*` when mailbox/IMAP/composer send features are used
+- [ ] `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM` only if Spacemail SMTP should be selectable in the runtime provider setting
+- [ ] `SPACEMAIL_*` only for IMAP inbox access and sent-folder copies
+- [ ] Optional: `MAIL_TEST_RECIPIENTS` allowlist for single-recipient test messages
 - [ ] Optional: `VITE_CONTACT_EMAIL`, `BOOTSTRAP_*` (bootstrap is local-only)
 
 Do **not** set secrets with a `VITE_` prefix. Do not add `PORT` (Vercel Functions do not bind the standalone server port) or `NODE_ENV` (Vercel manages it).
@@ -42,7 +44,11 @@ Set these in the Vercel project (Production and Preview as needed):
 
 Optional branding: `APP_NAME`, `APP_COMPANY_NAME`, `VITE_CONTACT_EMAIL`.
 
-Mailbox variables (`SPACEMAIL_*`) are only required when exercising SMTP/IMAP features.
+Mailbox variables (`SPACEMAIL_*`) are only required for IMAP inbox access and sent-folder copies.
+
+The Mailbox settings page lets a super admin select the active provider for all outbound system mail. Resend is selected by default; Spacemail is selectable only when its `SMTP_*` credentials are configured. IMAP inbox access and sent-folder copies remain optional and require `SPACEMAIL_*` mailbox credentials.
+
+Apply database migrations with `npm run db:migrate` before deploying a build that includes a new migration. Migration `0014_mail_delivery_settings` stores the active provider selection.
 
 ## Build settings
 

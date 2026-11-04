@@ -72,4 +72,36 @@ describe("Resend transactional email", () => {
       }),
     ).rejects.toThrow(/RESEND_API_KEY or RESEND_FROM_EMAIL is missing/);
   });
+
+  it("uses configured SMTP settings for the alternative provider", async () => {
+    await expect(
+      sendTransactionalEmail(
+        {
+          ...env,
+          AUTH_EMAIL_DELIVERY: "smtp",
+          SMTP_HOST: "smtp.spacemail.example",
+          SMTP_PORT: 587,
+          SMTP_USER: "mailbox@example.com",
+          SMTP_PASS: "smtp-secret",
+          SMTP_FROM: "sender@example.com",
+        },
+        {
+          to: "user@example.com",
+          subject: "Invitation",
+          text: "You are invited.",
+        },
+      ),
+    ).resolves.toEqual({ delivered: true });
+
+    expect(deliveries.transports[0]).toMatchObject({
+      host: "smtp.spacemail.example",
+      port: 587,
+      secure: false,
+      auth: { user: "mailbox@example.com", pass: "smtp-secret" },
+    });
+    expect(deliveries.messages[0]).toMatchObject({
+      from: "sender@example.com",
+      to: "user@example.com",
+    });
+  });
 });

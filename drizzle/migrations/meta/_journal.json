@@ -99,6 +99,13 @@
       "when": 1791680000000,
       "tag": "0013_role_signup_codes",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1791690000000,
+      "tag": "0014_mail_delivery_settings",
+      "breakpoints": true
     }
   ]
 }

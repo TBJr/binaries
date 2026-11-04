@@ -111,7 +111,7 @@ Key groups:
 | Auth | `BETTER_AUTH_SECRET`, `BETTER_AUTH_URL`, `FRONTEND_URL`, `AUTH_EMAIL_DELIVERY`, `RESEND_*` |
 | Database | `DATABASE_URL` |
 | Queue | `QUEUE_ENABLED`, `QUEUE_SIMULATION_ONLY`, `REDIS_URL`, `QUEUE_NAMESPACE` |
-| Mailbox | `RESEND_*`, `SPACEMAIL_IMAP_*`, `SPACEMAIL_EMAIL`, `SPACEMAIL_PASSWORD`, `SPACEMAIL_TEST_RECIPIENTS` |
+| Mailbox | `RESEND_*`, optional `SMTP_*` provider, optional `SPACEMAIL_IMAP_*` mailbox, optional `MAIL_TEST_RECIPIENTS` |
 
 `BETTER_AUTH_URL` and `FRONTEND_URL` must match the origin users visit. Trusted origins include apex/www pairs for public domains.
 

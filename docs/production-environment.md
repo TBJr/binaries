@@ -54,7 +54,7 @@ Never prefix secrets with `VITE_`.
 | `SPACEMAIL_EMAIL` | Incoming mailbox login / reply-to address | Required for mailbox | Vercel API | No | Outgoing From address is `RESEND_FROM_EMAIL`. |
 | `SPACEMAIL_PASSWORD` | Mailbox password | Required for mailbox | Vercel API | **Yes** | |
 | `SPACEMAIL_SENDER_NAME` | Display name for sends | Optional | Vercel API | No | |
-| `SPACEMAIL_TEST_RECIPIENTS` | Allowlist for controlled test sends | Required when mailbox configured | Vercel API | No | Comma-separated; legacy `SPACEMAIL_TEST_RECIPIENT` supported. |
+| `MAIL_TEST_RECIPIENTS` | Optional allowlist for single-recipient test sends | Optional | Vercel API | No | Comma-separated; legacy `SPACEMAIL_TEST_RECIPIENTS` and `SPACEMAIL_TEST_RECIPIENT` are supported. |
 | `USER_INVITATION_TTL_HOURS` | Admin invitation expiry | Optional | Vercel API | No | Default `48`. |
 | `PORT` | HTTP listen port | Optional | Railway API only | No | Default `3001`; ignored by Vercel Functions. |
 | `VERCEL` | Serverless flag | Auto | Vercel | No | Set by the platform. Forces a 1-connection pool and skips the access-control seed on the request path. |
@@ -81,7 +81,7 @@ All of **server core** from `server/env.ts`, plus queue vars if campaigns/queue 
 - `DATABASE_URL`, `BETTER_AUTH_SECRET`, `BETTER_AUTH_URL`, `FRONTEND_URL`
 - `AUTH_EMAIL_DELIVERY`, `RESEND_*` (when using Resend for auth mail)
 - `QUEUE_ENABLED`, `QUEUE_SIMULATION_ONLY`, `REDIS_URL`, `QUEUE_NAMESPACE`
-- `RESEND_*`, `SPACEMAIL_IMAP_*`, `SPACEMAIL_EMAIL`, `SPACEMAIL_PASSWORD`, `SPACEMAIL_TEST_RECIPIENTS` (when using mailbox)
+- `RESEND_*` for outbound Resend mail; `SMTP_*` to enable Spacemail SMTP selection; `SPACEMAIL_IMAP_*`, `SPACEMAIL_EMAIL`, `SPACEMAIL_PASSWORD` only for inbox and sent-folder access.
 - `APP_NAME`, `APP_COMPANY_NAME` (optional)
 
 BullMQ **workers do not run inside Vercel Functions**; enqueue/API operations use Redis from Vercel; processing runs on Railway.

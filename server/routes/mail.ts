@@ -4,11 +4,11 @@ import { accessDeniedMessage } from "../lib/brand.js";
 import { createDb } from "../db/index.js";
 import { loadEnv } from "../env.js";
 import { validationError } from "../lib/http-errors.js";
-import type { PermissionKey } from "../auth/permissions.js";
+import { parseRoleKeys, type PermissionKey } from "../auth/permissions.js";
 import { resolveRecipientOwnerId } from "../lib/org-workspace.js";
 import { getSessionUser } from "../lib/session.js";
 import { userHasPermission } from "../services/access-control.js";
-import { loadMailConfig } from "../mail/configuration.js";
+import { loadActiveMailConfig, getMailProviderSettings, setMailProvider } from "../services/mail-provider.js";
 import { MailboxError, publicSmtpCode } from "../mail/errors.js";
 import {
   listMailboxFolders,
@@ -55,6 +55,17 @@ async function requireMailbox(c: Context, permission: PermissionKey) {
   return { user };
 }
 
+async function requireSuperAdmin(c: Context) {
+  const account = await getSessionUser(c.req.raw.headers);
+  if (!account || (account as { banned?: boolean | null }).banned) {
+    return { response: json(c, { error: "Unauthorized" }, account ? 403 : 401) };
+  }
+  if (!parseRoleKeys(account.role).includes("super-admin")) {
+    return { response: json(c, { error: "Only a super admin can change the outbound email provider." }, 403) };
+  }
+  return { user: account };
+}
+
 function pageQuery(c: Context) {
   return mailPageQuerySchema.safeParse({
     page: c.req.query("page") ?? "1",
@@ -62,7 +73,42 @@ function pageQuery(c: Context) {
   });
 }
 
+async function loadConfiguredMail() {
+  return (await loadActiveMailConfig(db)).loaded;
+}
+
 export function registerMailRoutes(app: Hono) {
+  app.get("/api/mail/provider", async (c) => {
+    const access = await requireSuperAdmin(c);
+    if ("response" in access) return access.response;
+    return json(c, await getMailProviderSettings(db, env));
+  });
+
+  app.put("/api/mail/provider", async (c) => {
+    const access = await requireSuperAdmin(c);
+    if ("response" in access) return access.response;
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return json(c, { error: "Invalid JSON body" }, 400);
+    }
+    if (!body || typeof body !== "object" || !("provider" in body)) {
+      return json(c, { error: "Choose Resend or Spacemail." }, 400);
+    }
+    const provider = (body as { provider?: unknown }).provider;
+    if (provider !== "resend" && provider !== "spacemail") {
+      return json(c, { error: "Choose Resend or Spacemail." }, 400);
+    }
+    const settings = await getMailProviderSettings(db, env);
+    if (!settings.availability[provider]) {
+      return json(c, {
+        error: `${provider === "resend" ? "Resend" : "Spacemail SMTP"} credentials are not configured on the server.`,
+      }, 400);
+    }
+    return json(c, await setMailProvider(db, env, provider, access.user.id));
+  });
+
   app.get("/api/mail/status", async (c) => {
     const access = await requireMailbox(c, "mailbox.read");
     if ("response" in access) return access.response;
@@ -355,10 +401,13 @@ export function registerMailRoutes(app: Hono) {
   app.get("/api/mail/folders", async (c) => {
     const access = await requireMailbox(c, "mailbox.read");
     if ("response" in access) return access.response;
-    const loaded = loadMailConfig();
+    const loaded = await loadConfiguredMail();
     if (!loaded.ok) {
       console.error("[mail] configuration unavailable", loaded.reason);
       return json(c, { error: "Email account is not configured on the server." }, 503);
+    }
+    if (!loaded.config.imapConfigured) {
+      return json(c, { error: "Incoming mailbox credentials are not configured on the server." }, 503);
     }
     try {
       const folders = await listMailboxFolders(loaded.config);
@@ -378,10 +427,13 @@ export function registerMailRoutes(app: Hono) {
     if (!page.success) {
       return json(c, validationError(page.error), 400);
     }
-    const loaded = loadMailConfig();
+    const loaded = await loadConfiguredMail();
     if (!loaded.ok) {
       console.error("[mail] configuration unavailable", loaded.reason);
       return json(c, { error: "Email account is not configured on the server." }, 503);
+    }
+    if (!loaded.config.imapConfigured) {
+      return json(c, { error: "Incoming mailbox credentials are not configured on the server." }, 503);
     }
     try {
       const result = await listMailboxMessages(
@@ -406,10 +458,13 @@ export function registerMailRoutes(app: Hono) {
     if (!page.success) {
       return json(c, validationError(page.error), 400);
     }
-    const loaded = loadMailConfig();
+    const loaded = await loadConfiguredMail();
     if (!loaded.ok) {
       console.error("[mail] configuration unavailable", loaded.reason);
       return json(c, { error: "Email account is not configured on the server." }, 503);
+    }
+    if (!loaded.config.imapConfigured) {
+      return json(c, { error: "Incoming mailbox credentials are not configured on the server." }, 503);
     }
     try {
       const result = await listSentMessages(loaded.config, page.data.page, page.data.limit);
@@ -433,10 +488,13 @@ export function registerMailRoutes(app: Hono) {
     if (!page.success) {
       return json(c, validationError(page.error), 400);
     }
-    const loaded = loadMailConfig();
+    const loaded = await loadConfiguredMail();
     if (!loaded.ok) {
       console.error("[mail] configuration unavailable", loaded.reason);
       return json(c, { error: "Email account is not configured on the server." }, 503);
+    }
+    if (!loaded.config.imapConfigured) {
+      return json(c, { error: "Incoming mailbox credentials are not configured on the server." }, 503);
     }
     try {
       const result = await listMailboxMessages(
@@ -462,10 +520,13 @@ export function registerMailRoutes(app: Hono) {
     if (!uid.success || !folder.success) {
       return json(c, { error: "That message could not be found." }, 404);
     }
-    const loaded = loadMailConfig();
+    const loaded = await loadConfiguredMail();
     if (!loaded.ok) {
       console.error("[mail] configuration unavailable", loaded.reason);
       return json(c, { error: "Email account is not configured on the server." }, 503);
+    }
+    if (!loaded.config.imapConfigured) {
+      return json(c, { error: "Incoming mailbox credentials are not configured on the server." }, 503);
     }
     try {
       const message = await readMailboxMessage(loaded.config, folder.data, Number(uid.data));

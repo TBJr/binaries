@@ -15,7 +15,7 @@ import { resolveRecipientOwnerId } from "../lib/org-workspace.js";
 import { MailboxError } from "../mail/errors.js";
 import { saveSentCopy } from "../mail/imap.js";
 import { withPgAdvisoryLock, type MailLock } from "../mail/lock.js";
-import { loadMailConfig } from "../mail/configuration.js";
+import { loadActiveMailConfig } from "./mail-provider.js";
 import { TEST_SEND_LIMITS, assessTestSendRateLimit } from "../mail/rate-limit.js";
 import { submitSingleRecipientMessage } from "../mail/smtp.js";
 import { recordAuditEvent } from "./audit-log.js";
@@ -246,7 +246,7 @@ export async function sendDesignatedTestList(
   audit: TestListAuditContext = {},
   actorRole?: string | null,
 ): Promise<TestListSendOutcome> {
-  const loadedConfig = loadMailConfig();
+  const { loaded: loadedConfig } = await loadActiveMailConfig(db);
   if (!loadedConfig.ok) {
     console.error("[mail] configuration unavailable", loadedConfig.reason);
     return { kind: "not_configured" };

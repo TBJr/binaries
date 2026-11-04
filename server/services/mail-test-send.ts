@@ -1,5 +1,5 @@
 import type { Database } from "../db/index.js";
-import { loadMailConfig } from "../mail/configuration.js";
+import { loadActiveMailConfig } from "./mail-provider.js";
 import { isAuthorizedTestRecipient } from "../mail/test-recipients.js";
 import { normalizeEmail } from "../lib/email-normalization.js";
 import { MailboxError, safeErrorDetails } from "../mail/errors.js";
@@ -109,7 +109,7 @@ export async function sendControlledTest(
   userId: string,
   input: TestSendInput,
 ): Promise<TestSendOutcome> {
-  const loaded = loadMailConfig();
+  const { loaded } = await loadActiveMailConfig(db);
   if (!loaded.ok) {
     console.error("[mail] configuration unavailable", loaded.reason);
     return { kind: "not_configured" };
@@ -217,7 +217,7 @@ export async function sendControlledTest(
           error instanceof MailboxError
             ? error.message
             : "The outgoing mail server could not complete the request.";
-        console.error("[mail] test send failed", safeErrorDetails(error, [config.resendApiKey, config.password]));
+        console.error("[mail] test send failed", safeErrorDetails(error, [config.smtpPassword, config.password]));
         const failed = await updateSubmission(db, pending.id, {
           status: "failed",
           sentCopyStatus: "not_attempted",

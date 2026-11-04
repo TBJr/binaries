@@ -189,8 +189,6 @@ function checkMailbox(values: Record<string, string>): Finding[] {
     "SPACEMAIL_IMAP_SECURE",
     "SPACEMAIL_EMAIL",
     "SPACEMAIL_PASSWORD",
-    "RESEND_API_KEY",
-    "RESEND_FROM_EMAIL",
   ] as const;
   for (const key of hostKeys) {
     if (!values[key]?.trim()) {
@@ -201,18 +199,18 @@ function checkMailbox(values: Record<string, string>): Finding[] {
   const parsed = parseTestRecipientsFromEnv(values);
   if (!parsed.ok) {
     findings.push({
-      key: "SPACEMAIL_TEST_RECIPIENTS",
+      key: "MAIL_TEST_RECIPIENTS",
       status: parsed.reason === "empty" ? "MISSING" : "INVALID",
       detail:
         parsed.reason === "empty"
-          ? "Set SPACEMAIL_TEST_RECIPIENTS (comma-separated) or legacy SPACEMAIL_TEST_RECIPIENT when mailbox credentials are configured"
-          : "SPACEMAIL_TEST_RECIPIENTS contains a malformed email address",
+          ? "Set MAIL_TEST_RECIPIENTS (comma-separated) or legacy SPACEMAIL_TEST_RECIPIENTS when mailbox credentials are configured"
+          : "The configured test-recipient allowlist contains a malformed email address",
     });
     return findings;
   }
 
   findings.push({
-    key: "SPACEMAIL_TEST_RECIPIENTS",
+    key: "MAIL_TEST_RECIPIENTS",
     status: "VALID",
     detail: `${parsed.recipients.length} authorized test recipient(s) configured`,
   });
