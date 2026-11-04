@@ -10,7 +10,7 @@ Deploy **Binaries.nl** as a separate Vercel project from any SendStack / CTN pro
 
 ## Vercel environment checklist
 
-Copy from `.env.production` (local reference only — Vercel does not sync `.env.production` automatically):
+Use `.env.production` as the source for the Vercel project's **Production** environment variables. Add them in Vercel under **Project Settings → Environment Variables**; Vercel does not automatically load this local file.
 
 - [ ] `APP_NAME`, `APP_COMPANY_NAME`
 - [ ] `VITE_APP_URL` (Production + Preview; required at **build** time)
@@ -19,11 +19,11 @@ Copy from `.env.production` (local reference only — Vercel does not sync `.env
 - [ ] `DATABASE_URL` (Binaries.nl Neon — not SendStack)
 - [ ] `REDIS_URL` (`rediss://…` Upstash TCP/TLS — not REST)
 - [ ] `QUEUE_ENABLED`, `QUEUE_SIMULATION_ONLY=true`, `QUEUE_NAMESPACE`
-- [ ] `AUTH_EMAIL_DELIVERY` + `SMTP_*` when auth emails should send via SMTP
+- [ ] `AUTH_EMAIL_DELIVERY` and the matching provider credentials (`RESEND_API_KEY` + `RESEND_FROM_EMAIL` for Resend, or `SMTP_*` for SMTP)
 - [ ] `SPACEMAIL_*` when mailbox/IMAP/composer send features are used
 - [ ] Optional: `VITE_CONTACT_EMAIL`, `BOOTSTRAP_*` (bootstrap is local-only)
 
-Do **not** set secrets with a `VITE_` prefix.
+Do **not** set secrets with a `VITE_` prefix. Do not add `PORT` (Vercel Functions do not bind the standalone server port) or `NODE_ENV` (Vercel manages it).
 
 ## Required environment variables
 
