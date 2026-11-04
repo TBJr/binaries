@@ -35,7 +35,7 @@ Set these in the Vercel project (Production and Preview as needed):
 | `BETTER_AUTH_SECRET` | Yes | New random secret (≥ 32 chars) |
 | `BETTER_AUTH_URL` | Yes | `https://your-domain.example` |
 | `FRONTEND_URL` | Yes | Same public origin as the SPA |
-| `VITE_APP_URL` | Yes (build) | Same origin — used at build time for canonical URLs |
+| `VITE_APP_URL` | Yes (build) | Same origin — used at build time for canonical URLs; auth requests use the current page origin |
 | `QUEUE_SIMULATION_ONLY` | Yes | `true` (keep simulation-only) |
 | `QUEUE_ENABLED` | Optional | `false` until Redis is configured |
 | `REDIS_URL` | If queues enabled | New Upstash / Redis instance |
@@ -66,4 +66,4 @@ Sign in at `https://your-domain.example/login/` with an account created on **you
 
 ## Domain changes
 
-Update `BETTER_AUTH_URL`, `FRONTEND_URL`, and `VITE_APP_URL` together when changing the canonical domain. Better Auth trusted origins derive from `FRONTEND_URL` (apex ↔ www pairs for public hostnames).
+Update `BETTER_AUTH_URL`, `FRONTEND_URL`, and `VITE_APP_URL` together when changing the canonical domain. Better Auth trusted origins derive from `FRONTEND_URL` (apex ↔ www pairs for public hostnames). The browser auth client uses the current page origin so production auth requests cannot accidentally target a build machine's localhost.

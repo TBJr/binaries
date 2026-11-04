@@ -3,10 +3,7 @@ import { adminClient, twoFactorClient } from "better-auth/client/plugins";
 
 import { fetchWithStartupRetry } from "@/lib/dev-session-fetch";
 
-const baseURL =
-  typeof import.meta.env.VITE_APP_URL === "string" && import.meta.env.VITE_APP_URL.length > 0
-    ? import.meta.env.VITE_APP_URL
-    : undefined;
+const baseURL = typeof window === "undefined" ? undefined : window.location.origin;
 
 export const authClient = createAuthClient({
   baseURL,

@@ -23,7 +23,7 @@ Never prefix secrets with `VITE_`.
 | `NODE_ENV` | Runtime mode | Optional (Vercel sets `production` on deploy) | Vercel API | No | Use `production` on Railway long-running processes. |
 | `APP_NAME` | Product name in auth/UI | Optional | Vercel API, Railway | No | Default `Binaries.nl` if unset. |
 | `APP_COMPANY_NAME` | Branding / default sender name | Optional | Vercel API, Railway | No | Used when `SPACEMAIL_SENDER_NAME` is empty. |
-| `VITE_APP_URL` | Public site origin (canonical URLs, auth client) | **Required** (build) | Vercel (build + runtime reference) | No | Must match `FRONTEND_URL` / `BETTER_AUTH_URL`. HTTPS only. |
+| `VITE_APP_URL` | Public site origin for canonical URLs | **Required** (build) | Vercel (build + runtime reference) | No | Must match `FRONTEND_URL` / `BETTER_AUTH_URL`. HTTPS only. Browser auth requests use the current page origin. |
 | `VITE_CONTACT_EMAIL` | Public contact on marketing pages | Optional | Vercel (build) | No | Safe to expose in frontend bundle. |
 | `FRONTEND_URL` | CORS + Better Auth trusted origins base | **Required** | Vercel API, Railway | No | Same origin as `VITE_APP_URL`. Apex/www pairs added automatically for public hostnames. |
 | `BETTER_AUTH_URL` | Better Auth `baseURL` | **Required** | Vercel API, Railway | No | Must match `FRONTEND_URL` origin. Cookies use `secure` when URL is `https://`. |
