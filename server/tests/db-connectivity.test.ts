@@ -42,6 +42,28 @@ describe("database error classification", () => {
     expect(classifyDatabaseError(unique)).toBeNull();
     expect(publicApiError(unique)).toMatchObject({ status: 500, body: { error: "Internal server error" } });
     expect(publicApiError(unique).body.code).toBeUndefined();
+    expect(publicApiError(unique).log).toContain("sqlstate=23505");
+  });
+
+  it("logs safe PostgreSQL schema diagnostics from a wrapped query error", () => {
+    const postgresError = Object.assign(new Error("duplicate key value"), {
+      code: "23505",
+      severity: "ERROR",
+      schema: "public",
+      table: "contact_lists",
+      constraint: "contact_lists_user_id_name_unique",
+      detail: "Key values may contain private data",
+    });
+    const queryError = Object.assign(new Error("Failed query with secret query parameters"), {
+      cause: postgresError,
+    });
+    const mapped = publicApiError(queryError);
+
+    expect(mapped.log).toContain("sqlstate=23505");
+    expect(mapped.log).toContain("table=contact_lists");
+    expect(mapped.log).toContain("constraint=contact_lists_user_id_name_unique");
+    expect(mapped.log).not.toContain("secret");
+    expect(mapped.log).not.toContain("private data");
   });
 
   it("keeps PostgreSQL authentication failures out of the outage response", () => {

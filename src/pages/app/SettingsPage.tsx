@@ -76,6 +76,7 @@ function connectionVariant(status: ConnectionState): "default" | "destructive" |
 function submissionLabel(submission: MailSubmission) {
   if (submission.smtpAccepted) return "Accepted by outgoing server";
   if (submission.status === "rejected") return "Rejected";
+  if (submission.status === "uncertain") return "Delivery unconfirmed";
   if (submission.status === "pending") return "In progress";
   return "Not accepted";
 }

@@ -35,7 +35,8 @@ export type TestSendOutcome =
   | { kind: "rate_limited"; message: string }
   | { kind: "accepted"; submission: PublicSubmission }
   | { kind: "rejected"; submission: PublicSubmission }
-  | { kind: "failed"; submission: PublicSubmission };
+  | { kind: "failed"; submission: PublicSubmission }
+  | { kind: "uncertain"; submission: PublicSubmission };
 
 export function prepareTestMessageHtml(input: { text: string; html?: string }) {
   if (!input.html?.trim()) {
@@ -69,6 +70,9 @@ function outcomeFromRow(row: {
   }
   if (submission.status === "accepted") {
     return { kind: "duplicate", submission };
+  }
+  if (submission.status === "uncertain") {
+    return { kind: "uncertain", submission };
   }
   if (submission.status === "rejected") {
     return { kind: "duplicate", submission };
@@ -213,22 +217,23 @@ export async function sendControlledTest(
           ),
         };
       } catch (error) {
+        const uncertain = error instanceof MailboxError && error.code === "SMTP_UNCERTAIN";
         const message =
           error instanceof MailboxError
             ? error.message
             : "The outgoing mail server could not complete the request.";
         console.error("[mail] test send failed", safeErrorDetails(error, [config.smtpPassword, config.password]));
         const failed = await updateSubmission(db, pending.id, {
-          status: "failed",
+          status: uncertain ? "uncertain" : "failed",
           sentCopyStatus: "not_attempted",
           errorMessage: message,
         });
         return {
-          kind: "failed" as const,
+          kind: uncertain ? "uncertain" as const : "failed" as const,
           submission: toPublicSubmission(
             failed ??
               fallbackRow(pending, {
-                status: "failed",
+                status: uncertain ? "uncertain" : "failed",
                 messageId: null,
                 sentCopyStatus: "not_attempted",
                 errorMessage: message,

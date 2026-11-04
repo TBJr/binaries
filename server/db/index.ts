@@ -3,9 +3,12 @@ import postgres from "postgres";
 
 import type { ServerEnv } from "../env.js";
 import { describeDatabaseTarget } from "../lib/database-url.js";
-import { classifyDatabaseError, isPostgresAuthenticationError } from "../lib/db-errors.js";
+import {
+  classifyDatabaseError,
+  databaseErrorLogLabel,
+  isPostgresAuthenticationError,
+} from "../lib/db-errors.js";
 import { configureOutboundConnections } from "../lib/node-net.js";
-import { safeErrorLabel } from "../lib/startup-log.js";
 import * as schema from "./schema.js";
 
 type DbBundle = {
@@ -105,7 +108,18 @@ export async function probeDatabase(databaseUrl: string): Promise<"ok" | "unavai
     },
   });
   let timer: ReturnType<typeof setTimeout> | undefined;
-  const attempt = client`select 1`.then(
+  const attempt = (async () => {
+    await client`
+      select 1
+      from mail_delivery_settings
+      limit 0
+    `;
+    await client`
+      select 1
+      from contact_lists
+      limit 0
+    `;
+  })().then(
     () => "ok" as const,
     (error: unknown) => {
       const failure = classifyDatabaseError(error);
@@ -114,7 +128,7 @@ export async function probeDatabase(databaseUrl: string): Promise<"ok" | "unavai
         : isPostgresAuthenticationError(error)
           ? "kind=authentication"
           : "kind=query";
-      console.error("[health] database", detail, safeErrorLabel(error));
+      console.error("[health] database", detail, databaseErrorLogLabel(error));
       return "unavailable" as const;
     },
   );
@@ -169,7 +183,16 @@ export async function checkDatabase(databaseUrl: string): Promise<{
     connection: { application_name: "kivorenta-check" },
   });
   try {
-    await client`select 1`;
+    await client`
+      select 1
+      from mail_delivery_settings
+      limit 0
+    `;
+    await client`
+      select 1
+      from contact_lists
+      limit 0
+    `;
     return { ok: true, target, elapsedMs: Date.now() - started };
   } catch (error) {
     const failure = classifyDatabaseError(error);

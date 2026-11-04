@@ -56,6 +56,9 @@ describe("Resend transactional email", () => {
       port: 465,
       secure: true,
       auth: { user: "resend", pass: "re_test_key" },
+      connectionTimeout: 5_000,
+      greetingTimeout: 5_000,
+      socketTimeout: 8_000,
     });
     expect(deliveries.messages[0]).toMatchObject({
       from: "no-reply@mail.example.com",

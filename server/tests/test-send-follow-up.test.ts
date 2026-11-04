@@ -60,6 +60,13 @@ describe("single recipient test send", () => {
     expect(followUp.tone).toBe("error");
   });
 
+  it("warns against retrying when the outgoing server did not confirm acceptance", () => {
+    const followUp = singleTestSendFollowUp({ smtpAccepted: false, status: "uncertain" }, false);
+    expect(followUp.navigateTo).toBeNull();
+    expect(followUp.tone).toBe("warning");
+    expect(followUp.message).toContain("Check the provider's delivery logs before retrying.");
+  });
+
   it("keeps a duplicate replay from submitting again and still opens Sent when it was accepted", () => {
     const followUp = singleTestSendFollowUp({ smtpAccepted: true, status: "accepted" }, true);
     expect(followUp.navigateTo).toBe(SENT_ROUTE);

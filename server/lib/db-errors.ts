@@ -81,6 +81,55 @@ function readCode(error: unknown) {
   return typeof code === "string" && code ? code : undefined;
 }
 
+function safeDiagnosticValue(value: unknown) {
+  if (typeof value !== "string" || !/^[a-zA-Z0-9_.-]{1,80}$/.test(value)) return undefined;
+  return value;
+}
+
+function postgresDiagnostics(error: unknown): {
+  code?: string;
+  severity?: string;
+  schema?: string;
+  table?: string;
+  column?: string;
+  constraint?: string;
+} | null {
+  if (!error || typeof error !== "object") return null;
+  if (error instanceof AggregateError) {
+    for (const nested of error.errors) {
+      const diagnostics = postgresDiagnostics(nested);
+      if (diagnostics) return diagnostics;
+    }
+    return null;
+  }
+
+  const candidate = error as Record<string, unknown>;
+  const code = safeDiagnosticValue(candidate.code);
+  const diagnostics = {
+    ...(code && isSqlState(code) ? { code } : {}),
+    ...(safeDiagnosticValue(candidate.severity) ? { severity: safeDiagnosticValue(candidate.severity) } : {}),
+    ...(safeDiagnosticValue(candidate.schema) ? { schema: safeDiagnosticValue(candidate.schema) } : {}),
+    ...(safeDiagnosticValue(candidate.table) ? { table: safeDiagnosticValue(candidate.table) } : {}),
+    ...(safeDiagnosticValue(candidate.column) ? { column: safeDiagnosticValue(candidate.column) } : {}),
+    ...(safeDiagnosticValue(candidate.constraint) ? { constraint: safeDiagnosticValue(candidate.constraint) } : {}),
+  };
+  if (Object.keys(diagnostics).length > 0) return diagnostics;
+  if (error instanceof Error && error.cause) return postgresDiagnostics(error.cause);
+  return null;
+}
+
+export function databaseErrorLogLabel(error: unknown) {
+  const diagnostics = postgresDiagnostics(error);
+  if (!diagnostics?.code) return safeErrorLabel(error);
+  return [
+    `[database] query failed sqlstate=${diagnostics.code}`,
+    `severity=${diagnostics.severity ?? "unknown"}`,
+    ...(["schema", "table", "column", "constraint"] as const)
+      .filter((key) => diagnostics[key])
+      .map((key) => `${key}=${diagnostics[key]}`),
+  ].join(" ");
+}
+
 function isSqlState(code: string) {
   return /^[0-9A-Z]{5}$/.test(code);
 }
@@ -159,6 +208,14 @@ export function publicApiError(error: unknown): {
       status: 500,
       body: { error: "Internal server error" },
       log: "[database] authentication rejected by server",
+    };
+  }
+  const diagnostics = postgresDiagnostics(error);
+  if (diagnostics?.code) {
+    return {
+      status: 500,
+      body: { error: "Internal server error" },
+      log: databaseErrorLogLabel(error),
     };
   }
   return {

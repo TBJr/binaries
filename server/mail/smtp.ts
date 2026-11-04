@@ -1,13 +1,15 @@
 import { createTransport, type SendMailOptions } from "nodemailer";
 
 import { assertAllRecipientsAuthorized, assertAuthorizedParties, type MailConfig } from "./configuration.js";
+import { withMailDeadline } from "./deadline.js";
 import { normalizeEmail } from "../lib/email-normalization.js";
 import { friendlyMailError, MailboxError, redactSecrets, safeErrorDetails } from "./errors.js";
 
 const MAIL_TIMEOUTS = {
-  connectionMs: 15_000,
-  greetingMs: 15_000,
-  socketMs: 20_000,
+  connectionMs: 5_000,
+  greetingMs: 5_000,
+  socketMs: 8_000,
+  totalMs: 12_000,
 } as const;
 
 export type SmtpSubmitResult = {
@@ -112,12 +114,20 @@ export async function submitComposerMessage(
 
   const transport = smtpTransport(config);
   try {
-    const info = await transport.sendMail({
-      envelope: { from, to: envelopeTo },
-      raw: deliveryRaw,
-      disableFileAccess: true,
-      disableUrlAccess: true,
-    });
+    const info = await withMailDeadline(
+      transport.sendMail({
+        envelope: { from, to: envelopeTo },
+        raw: deliveryRaw,
+        disableFileAccess: true,
+        disableUrlAccess: true,
+      }),
+      MAIL_TIMEOUTS.totalMs,
+      () => new MailboxError(
+        "The outgoing server did not confirm whether it accepted the message.",
+        502,
+        "SMTP_UNCERTAIN",
+      ),
+    );
     const acceptedRecipients = addressList(info.accepted);
     const rejectedRecipients = addressList(info.rejected);
     const accepted =
@@ -134,6 +144,7 @@ export async function submitComposerMessage(
       raw: sentRaw,
     };
   } catch (error) {
+    if (error instanceof MailboxError) throw error;
     const rejected = addressList((error as { rejected?: unknown }).rejected);
     const code = (error as { code?: string }).code;
     if (code === "EENVELOPE" || rejected.length > 0) {
@@ -166,7 +177,11 @@ export async function submitComposerMessage(
 export async function verifySmtp(config: MailConfig) {
   const transport = smtpTransport(config);
   try {
-    await transport.verify();
+    await withMailDeadline(
+      transport.verify(),
+      MAIL_TIMEOUTS.totalMs,
+      () => new MailboxError("The outgoing mail server connection timed out.", 502, "SMTP_VERIFY_FAILED"),
+    );
   } catch (error) {
     console.error("[mail] smtp verify failed", safeErrorDetails(error, [config.smtpPassword]));
     throw new MailboxError(friendlyMailError(error, "smtp"), 502, "SMTP_VERIFY_FAILED");
@@ -241,15 +256,23 @@ export async function submitSingleRecipientMessage(
 
   const transport = smtpTransport(config);
   try {
-    const info = await transport.sendMail({
-      envelope: {
-        from: config.fromEmail,
-        to,
-      },
-      raw,
-      disableFileAccess: true,
-      disableUrlAccess: true,
-    });
+    const info = await withMailDeadline(
+      transport.sendMail({
+        envelope: {
+          from: config.fromEmail,
+          to,
+        },
+        raw,
+        disableFileAccess: true,
+        disableUrlAccess: true,
+      }),
+      MAIL_TIMEOUTS.totalMs,
+      () => new MailboxError(
+        "The outgoing server did not confirm whether it accepted the message.",
+        502,
+        "SMTP_UNCERTAIN",
+      ),
+    );
     const acceptedRecipients = addressList(info.accepted);
     const rejectedRecipients = addressList(info.rejected);
     const accepted = acceptedRecipients.some((recipient) => normalizeEmail(recipient) === to);
@@ -262,6 +285,7 @@ export async function submitSingleRecipientMessage(
       raw,
     };
   } catch (error) {
+    if (error instanceof MailboxError) throw error;
     const rejected = addressList((error as { rejected?: unknown }).rejected);
     const code = (error as { code?: string }).code;
     if (code === "EENVELOPE" || rejected.length > 0) {
@@ -278,6 +302,13 @@ export async function submitSingleRecipientMessage(
       };
     }
     console.error("[mail] smtp send failed", safeErrorDetails(error, [config.resendApiKey]));
+    if (isUncertainSmtpError(error)) {
+      throw new MailboxError(
+        "The outgoing server did not confirm whether it accepted the message.",
+        502,
+        "SMTP_UNCERTAIN",
+      );
+    }
     throw new MailboxError(friendlyMailError(error, "smtp"), 502, "SMTP_SEND_FAILED");
   } finally {
     transport.close();

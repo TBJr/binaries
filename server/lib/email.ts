@@ -1,6 +1,14 @@
 import { createTransport } from "nodemailer";
 
 import type { ServerEnv } from "../env.js";
+import { withMailDeadline } from "../mail/deadline.js";
+
+const MAIL_TIMEOUTS = {
+  connectionMs: 5_000,
+  greetingMs: 5_000,
+  socketMs: 8_000,
+  totalMs: 12_000,
+} as const;
 
 export type TransactionalEmailPayload = {
   to: string;
@@ -75,19 +83,23 @@ export async function sendTransactionalEmail(
     secure,
     requireTLS: !secure,
     auth: { user, pass },
-    connectionTimeout: 15_000,
-    greetingTimeout: 15_000,
-    socketTimeout: 20_000,
+    connectionTimeout: MAIL_TIMEOUTS.connectionMs,
+    greetingTimeout: MAIL_TIMEOUTS.greetingMs,
+    socketTimeout: MAIL_TIMEOUTS.socketMs,
     tls: { minVersion: "TLSv1.2", servername: host },
   });
   try {
-    await transport.sendMail({
-      from,
-      to: payload.to,
-      subject: payload.subject,
-      text: payload.text,
-      envelope: { from, to: payload.to },
-    });
+    await withMailDeadline(
+      transport.sendMail({
+        from,
+        to: payload.to,
+        subject: payload.subject,
+        text: payload.text,
+        envelope: { from, to: payload.to },
+      }),
+      MAIL_TIMEOUTS.totalMs,
+      () => new Error("The email provider did not confirm whether it accepted the message."),
+    );
     return { delivered: true };
   } finally {
     transport.close();

@@ -162,6 +162,12 @@ export function singleTestSendFollowUp(submission: SingleTestOutcome, duplicate:
         : "";
     return goToSent(`Test message sent successfully.${saved}`);
   }
+  if (submission.status === "uncertain") {
+    return stay(
+      "warning",
+      "The outgoing server did not confirm whether it accepted this message. Check the provider's delivery logs before retrying.",
+    );
+  }
   return stay(
     "error",
     submission.status === "rejected"

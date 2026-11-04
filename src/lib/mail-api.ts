@@ -54,7 +54,7 @@ export type MailMessage = {
 
 export type MailSubmission = {
   id: string;
-  status: "pending" | "accepted" | "rejected" | "failed";
+  status: "pending" | "accepted" | "rejected" | "failed" | "uncertain";
   from: string;
   to: string;
   subject: string;

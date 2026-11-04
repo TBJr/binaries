@@ -53,7 +53,7 @@ export type PublicMessage = {
   attachments: PublicAttachment[];
 };
 
-export type SubmissionStatus = "pending" | "accepted" | "rejected" | "failed";
+export type SubmissionStatus = "pending" | "accepted" | "rejected" | "failed" | "uncertain";
 
 export type PublicSubmission = {
   id: string;
@@ -83,7 +83,7 @@ export type MailStatus = {
   latestSubmission: PublicSubmission | null;
 };
 
-const SUBMISSION_STATUSES = new Set<SubmissionStatus>(["pending", "accepted", "rejected", "failed"]);
+const SUBMISSION_STATUSES = new Set<SubmissionStatus>(["pending", "accepted", "rejected", "failed", "uncertain"]);
 
 export function submissionNote(status: SubmissionStatus, sentCopyStatus: string | null) {
   if (status === "accepted") {
@@ -105,6 +105,9 @@ export function submissionNote(status: SubmissionStatus, sentCopyStatus: string 
   }
   if (status === "rejected") {
     return "The outgoing server rejected the message. It was not accepted for delivery.";
+  }
+  if (status === "uncertain") {
+    return "The outgoing server did not confirm whether it accepted this message. Check the provider's delivery logs before retrying.";
   }
   if (status === "failed") {
     return "The message was not accepted by the outgoing server.";
