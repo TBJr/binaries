@@ -2,6 +2,7 @@ import { createTransport } from "nodemailer";
 
 import type { ServerEnv } from "../env.js";
 import { withMailDeadline } from "../mail/deadline.js";
+import { sendResendEmail } from "../mail/resend.js";
 
 const MAIL_TIMEOUTS = {
   connectionMs: 5_000,
@@ -74,6 +75,22 @@ export async function sendTransactionalEmail(
     if (!host || !port || !user || !pass || !from) {
       throw new Error("SMTP delivery is selected but the server mail settings are incomplete.");
     }
+  }
+
+  if (env.AUTH_EMAIL_DELIVERY === "resend") {
+    const result = await sendResendEmail(
+      pass,
+      {
+        from,
+        to: [payload.to],
+        subject: payload.subject,
+        text: payload.text,
+      },
+    );
+    if (!result.accepted) {
+      throw new Error(result.response);
+    }
+    return { delivered: true };
   }
 
   const secure = port === 465;

@@ -34,7 +34,7 @@ Never prefix secrets with `VITE_`.
 | `SMTP_USER` | Auth SMTP username | Required if smtp | Vercel API, Railway | **Yes** | |
 | `SMTP_PASS` | Auth SMTP password | Required if smtp | Vercel API, Railway | **Yes** | |
 | `SMTP_FROM` | Auth email From address | Required if smtp | Vercel API, Railway | No | Valid address when using a non-Resend SMTP server. |
-| `RESEND_API_KEY` | Resend SMTP credential | Required if `AUTH_EMAIL_DELIVERY=resend` or mailbox sending is used | Vercel API, Railway | **Yes** | Keep server-side only; never use a `VITE_` variable. |
+| `RESEND_API_KEY` | Resend API credential | Required if `AUTH_EMAIL_DELIVERY=resend` or mailbox sending is used | Vercel API, Railway | **Yes** | Resend delivery uses its HTTPS API; keep server-side only and never use a `VITE_` variable. |
 | `RESEND_FROM_EMAIL` | Verified outbound sender address | Required if Resend is used | Vercel API, Railway | No | Use an address on a domain verified in Resend, preferably a dedicated sending subdomain with SPF/DKIM configured. |
 | `DATABASE_URL` | PostgreSQL for Drizzle/Better Auth | **Required** | Shared (Vercel + Railway) | **Yes** | Neon pooled URL with `sslmode=require` for the running app. See `docs/DATABASE-CONNECTIVITY.md`. |
 | `DATABASE_POOL_MAX` | postgres.js pool size | Optional | Railway / local long-running | No | Default `10`. Ignored on Vercel, which keeps a single connection. Cap `20`. |

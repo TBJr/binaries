@@ -162,6 +162,7 @@ export async function sendControlledTest(
           text: input.text,
           html,
           to: toAddress,
+          idempotencyKey: pending.id,
         });
 
         if (!submitted.accepted) {

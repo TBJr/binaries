@@ -137,7 +137,13 @@ export function registerMailRoutes(app: Hono) {
   });
 
   app.post("/api/mail/test-send", async (c) => {
+    const requestStartedAt = Date.now();
+    const logPhase = (phase: string) => {
+      console.info(`[mail-test] phase=${phase} elapsedMs=${Date.now() - requestStartedAt}`);
+    };
+    logPhase("started");
     const access = await requireMailbox(c, "mailbox.send_test");
+    logPhase("authorization_complete");
     if ("response" in access) return access.response;
 
     let body: unknown;
@@ -154,6 +160,7 @@ export function registerMailRoutes(app: Hono) {
     if (!parsed.success) {
       return json(c, validationError(parsed.error), 400);
     }
+    logPhase("request_validated");
 
     if (parsed.data.recipientMode === "test_list") {
       try {
@@ -174,6 +181,7 @@ export function registerMailRoutes(app: Hono) {
           },
           access.user.role,
         );
+        logPhase("test_list_send_complete");
         if (outcome.kind === "not_configured") {
           return json(c, { error: "Email account is not configured on the server.", code: "smtp_unavailable" }, 503);
         }
@@ -220,6 +228,7 @@ export function registerMailRoutes(app: Hono) {
           duplicate: outcome.kind === "duplicate",
         });
       } catch (error) {
+        logPhase("test_list_send_failed");
         if (error instanceof MailboxError) {
           return json(c, { error: error.message, code: publicSmtpCode(error) }, error.status);
         }
@@ -247,6 +256,7 @@ export function registerMailRoutes(app: Hono) {
         idempotencyKey: parsed.data.idempotencyKey,
         testRecipient: parsed.data.testRecipient,
       });
+      logPhase("single_send_complete");
       if (outcome.kind === "not_configured") {
         return json(c, { error: "Email account is not configured on the server." }, 503);
       }
@@ -271,6 +281,7 @@ export function registerMailRoutes(app: Hono) {
         502,
       );
     } catch (error) {
+      logPhase("single_send_failed");
       if (error instanceof MailboxError) {
         return json(c, { error: error.message }, error.status);
       }

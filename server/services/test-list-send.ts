@@ -421,6 +421,7 @@ export async function sendDesignatedTestList(
             text: input.text,
             html,
             to: recipient.email,
+            idempotencyKey: submission.id,
           });
         } catch (error) {
           await updateSubmission(db, submission.id, {

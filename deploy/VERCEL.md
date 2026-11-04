@@ -48,6 +48,8 @@ Mailbox variables (`SPACEMAIL_*`) are only required for IMAP inbox access and se
 
 The Mailbox settings page lets a super admin select the active provider for all outbound system mail. Resend is selected by default; Spacemail is selectable only when its `SMTP_*` credentials are configured. IMAP inbox access and sent-folder copies remain optional and require `SPACEMAIL_*` mailbox credentials.
 
+Resend outbound messages use its HTTPS API, not SMTP, to avoid SMTP egress and long connection stalls in serverless functions. Spacemail remains an SMTP option.
+
 Apply database migrations with `npm run db:migrate` before deploying a build that includes a new migration. Migration `0014_mail_delivery_settings` stores the active provider selection.
 
 ## Build settings

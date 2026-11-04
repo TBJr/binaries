@@ -1,9 +1,10 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const deliveries = vi.hoisted(
   () => ({
     transports: [] as Array<Record<string, unknown>>,
     messages: [] as Array<Record<string, unknown>>,
+    requests: [] as Array<{ url: string; init?: RequestInit }>,
   }),
 );
 
@@ -40,9 +41,18 @@ describe("Resend transactional email", () => {
   beforeEach(() => {
     deliveries.transports.length = 0;
     deliveries.messages.length = 0;
+    deliveries.requests.length = 0;
+    vi.stubGlobal("fetch", async (input: string | URL | Request, init?: RequestInit) => {
+      deliveries.requests.push({ url: String(input), init });
+      return Response.json({ id: "re_auth_test" });
+    });
   });
 
-  it("uses Resend SMTP and the verified sender address", async () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("uses Resend's HTTPS API and the verified sender address", async () => {
     await expect(
       sendTransactionalEmail(env, {
         to: "user@example.com",
@@ -51,18 +61,20 @@ describe("Resend transactional email", () => {
       }),
     ).resolves.toEqual({ delivered: true });
 
-    expect(deliveries.transports[0]).toMatchObject({
-      host: "smtp.resend.com",
-      port: 465,
-      secure: true,
-      auth: { user: "resend", pass: "re_test_key" },
-      connectionTimeout: 5_000,
-      greetingTimeout: 5_000,
-      socketTimeout: 8_000,
+    expect(deliveries.transports).toHaveLength(0);
+    expect(deliveries.requests[0]?.url).toBe("https://api.resend.com/emails");
+    expect(deliveries.requests[0]?.init).toMatchObject({
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${env.RESEND_API_KEY}`,
+        "Content-Type": "application/json",
+      },
     });
-    expect(deliveries.messages[0]).toMatchObject({
+    expect(JSON.parse(String(deliveries.requests[0]?.init?.body))).toMatchObject({
       from: "no-reply@mail.example.com",
-      to: "user@example.com",
+      to: ["user@example.com"],
+      subject: "Verify your account",
+      text: "Verify your account.",
     });
   });
 

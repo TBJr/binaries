@@ -2,6 +2,7 @@ import { createTransport, type SendMailOptions } from "nodemailer";
 
 import { assertAllRecipientsAuthorized, assertAuthorizedParties, type MailConfig } from "./configuration.js";
 import { withMailDeadline } from "./deadline.js";
+import { sendResendEmail, verifyResendConnection } from "./resend.js";
 import { normalizeEmail } from "../lib/email-normalization.js";
 import { friendlyMailError, MailboxError, redactSecrets, safeErrorDetails } from "./errors.js";
 
@@ -60,6 +61,15 @@ function compileMessage(mail: SendMailOptions) {
     .finally(() => compiler.close());
 }
 
+function resendFrom(config: MailConfig) {
+  const name = config.senderName.replace(/["\\]/g, "\\$&");
+  return `"${name}" <${config.fromEmail}>`;
+}
+
+function resendIdempotencyKey(messageId: string) {
+  return messageId.replace(/[<>]/g, "");
+}
+
 function isUncertainSmtpError(error: unknown) {
   const code = (error as { code?: string }).code ?? "";
   return ["ETIMEDOUT", "ESOCKET", "ECONNECTION", "ECONNRESET", "ETLS", "EDNS"].includes(code);
@@ -110,6 +120,33 @@ export async function submitComposerMessage(
   } catch (error) {
     if (error instanceof MailboxError) throw error;
     throw new MailboxError("The message could not be prepared.", 502, "COMPOSE_FAILED");
+  }
+
+  if (config.provider === "resend") {
+    const submitted = await sendResendEmail(
+      config.resendApiKey,
+      {
+        from: resendFrom(config),
+        to: message.to,
+        ...(message.cc.length > 0 ? { cc: message.cc } : {}),
+        ...(message.bcc.length > 0 ? { bcc: message.bcc } : {}),
+        reply_to: config.email,
+        subject: message.subject,
+        text: message.text,
+        html: message.html,
+        headers: { "Message-ID": message.messageId },
+      },
+      resendIdempotencyKey(message.messageId),
+    );
+    const recipients = [...new Set(envelopeTo)];
+    return {
+      accepted: submitted.accepted,
+      messageId: message.messageId,
+      acceptedRecipients: submitted.accepted ? recipients : [],
+      rejectedRecipients: submitted.accepted ? [] : recipients,
+      response: submitted.accepted ? `Resend accepted message ${submitted.id}.` : submitted.response,
+      raw: sentRaw,
+    };
   }
 
   const transport = smtpTransport(config);
@@ -175,6 +212,11 @@ export async function submitComposerMessage(
 }
 
 export async function verifySmtp(config: MailConfig) {
+  if (config.provider === "resend") {
+    await verifyResendConnection(config.resendApiKey);
+    return;
+  }
+
   const transport = smtpTransport(config);
   try {
     await withMailDeadline(
@@ -199,7 +241,7 @@ function addressList(value: unknown) {
 
 export async function submitAuthorizedMessage(
   config: MailConfig,
-  message: { subject: string; text: string; html: string; to: string },
+  message: { subject: string; text: string; html: string; to: string; idempotencyKey?: string },
 ): Promise<CompiledSubmission> {
   const to = normalizeEmail(message.to);
   assertAuthorizedParties(config, { from: config.fromEmail, to });
@@ -214,7 +256,7 @@ export async function submitAuthorizedMessage(
  */
 export async function submitSingleRecipientMessage(
   config: MailConfig,
-  message: { subject: string; text: string; html: string; to: string },
+  message: { subject: string; text: string; html: string; to: string; idempotencyKey?: string },
 ): Promise<CompiledSubmission> {
   const to = normalizeEmail(message.to);
   const domain = config.fromEmail.split("@")[1] ?? "localhost";
@@ -252,6 +294,30 @@ export async function submitSingleRecipientMessage(
     throw new MailboxError("The message could not be prepared.", 502, "COMPOSE_FAILED");
   } finally {
     compiler.close();
+  }
+
+  if (config.provider === "resend") {
+    const submitted = await sendResendEmail(
+      config.resendApiKey,
+      {
+        from: resendFrom(config),
+        to: [to],
+        reply_to: config.email,
+        subject: message.subject,
+        text: message.text,
+        html: message.html,
+        headers: { "Message-ID": messageId },
+      },
+      message.idempotencyKey ?? resendIdempotencyKey(messageId),
+    );
+    return {
+      accepted: submitted.accepted,
+      messageId,
+      acceptedRecipients: submitted.accepted ? [to] : [],
+      rejectedRecipients: submitted.accepted ? [] : [to],
+      response: submitted.accepted ? `Resend accepted message ${submitted.id}.` : submitted.response,
+      raw,
+    };
   }
 
   const transport = smtpTransport(config);

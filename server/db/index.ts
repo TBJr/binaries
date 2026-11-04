@@ -39,7 +39,10 @@ export function createDb(env: ServerEnv, options?: { cache?: boolean }) {
   }
 
   const serverless = Boolean(process.env.VERCEL);
-  const connectTimeoutSec = connectTimeoutSeconds(env, serverless);
+  const configuredConnectTimeoutSec = connectTimeoutSeconds(env, serverless);
+  const connectTimeoutSec = serverless
+    ? Math.min(configuredConnectTimeoutSec, 5)
+    : configuredConnectTimeoutSec;
   configureOutboundConnections({
     nodeEnv: env.NODE_ENV,
     connectTimeoutMs: connectTimeoutSec * 1000,
@@ -55,6 +58,13 @@ export function createDb(env: ServerEnv, options?: { cache?: boolean }) {
     ...(development ? { idle_timeout: 20, max_lifetime: 60 * 30, keep_alive: 30 } : {}),
     connection: {
       application_name: serverless ? "kivorenta-vercel" : "kivorenta",
+      ...(serverless
+        ? {
+          statement_timeout: 5_000,
+          lock_timeout: 3_000,
+            idle_in_transaction_session_timeout: 20_000,
+          }
+        : {}),
     },
   });
 

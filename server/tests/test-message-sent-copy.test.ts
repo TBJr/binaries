@@ -1,9 +1,10 @@
 import { readFileSync } from "node:fs";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const envelopes = vi.hoisted(
   () => [] as Array<{ envelope?: { from?: unknown; to?: unknown }; raw?: Buffer }>,
 );
+const resendRequests = vi.hoisted(() => [] as Array<{ url: string; init?: RequestInit }>);
 
 vi.mock("nodemailer", async () => {
   const actual = await vi.importActual<typeof import("nodemailer")>("nodemailer");
@@ -46,16 +47,21 @@ const config: MailConfig = {
   senderName: "Kivorenta",
 };
 
-function header(raw: string, name: string) {
-  return raw.match(new RegExp(`^${name}:\\s*(.*)$`, "im"))?.[1]?.trim() ?? "";
-}
-
 describe("test message sent copies", () => {
   beforeEach(() => {
     envelopes.length = 0;
+    resendRequests.length = 0;
+    vi.stubGlobal("fetch", async (input: string | URL | Request, init?: RequestInit) => {
+      resendRequests.push({ url: String(input), init });
+      return Response.json({ id: `re_${resendRequests.length}` });
+    });
   });
 
-  it("submits each recipient alone, with no Cc or Bcc and no second SMTP call", async () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("submits each recipient separately through Resend without exposing other recipients", async () => {
     const first = await submitSingleRecipientMessage(config, {
       subject: "Test",
       text: "Hello one",
@@ -69,28 +75,39 @@ describe("test message sent copies", () => {
       to: "two@example.com",
     });
 
-    expect(envelopes).toHaveLength(2);
-    expect(envelopes.map((entry) => entry.envelope?.to)).toEqual(["one@example.com", "two@example.com"]);
-    expect(envelopes.map((entry) => entry.envelope?.from)).toEqual([
-      "sender@send.example.com",
-      "sender@send.example.com",
+    expect(envelopes).toHaveLength(0);
+    expect(resendRequests).toHaveLength(2);
+    expect(resendRequests.map((entry) => entry.url)).toEqual([
+      "https://api.resend.com/emails",
+      "https://api.resend.com/emails",
     ]);
     expect(first.messageId).not.toBe(second.messageId);
     expect(first.accepted).toBe(true);
     expect(second.accepted).toBe(true);
 
-    for (const [index, entry] of envelopes.entries()) {
-      const raw = entry.raw?.toString("utf8") ?? "";
+    for (const [index, entry] of resendRequests.entries()) {
+      const body = JSON.parse(String(entry.init?.body)) as {
+        to: string[];
+        cc?: string[];
+        bcc?: string[];
+        from: string;
+        reply_to: string;
+        headers: Record<string, string>;
+      };
       const recipient = index === 0 ? "one@example.com" : "two@example.com";
       const other = index === 0 ? "two@example.com" : "one@example.com";
-      expect(header(raw, "To").toLowerCase()).toContain(recipient);
-      expect(header(raw, "To").toLowerCase()).not.toContain(other);
-      expect(header(raw, "Cc")).toBe("");
-      expect(header(raw, "Bcc")).toBe("");
-      expect(header(raw, "From")).toContain("sender@send.example.com");
-      expect(header(raw, "Reply-To")).toBe("inbox@spacemail.example");
-      expect(raw.toLowerCase()).not.toContain("list-unsubscribe");
-      expect(String(entry.envelope?.to)).not.toContain(",");
+      expect(body.to).toEqual([recipient]);
+      expect(JSON.stringify(body)).not.toContain(other);
+      expect(body.cc).toBeUndefined();
+      expect(body.bcc).toBeUndefined();
+      expect(body.from).toContain("sender@send.example.com");
+      expect(body.reply_to).toBe("inbox@spacemail.example");
+      expect(body.headers["Message-ID"]).toBe(index === 0 ? first.messageId : second.messageId);
+      expect(entry.init?.headers).toMatchObject({
+        Authorization: `Bearer ${config.resendApiKey}`,
+        "Content-Type": "application/json",
+      });
+      expect(entry.init?.headers).toHaveProperty("Idempotency-Key");
     }
   });
 
