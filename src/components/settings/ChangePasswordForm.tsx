@@ -5,6 +5,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { mapAuthErrorMessage, validatePassword } from "@/lib/auth-validation";
+import { notifyAccountSecurityUpdated } from "@/lib/account-security-events";
 
 type ChangePasswordFormProps = {
   onSuccess?: () => void;
@@ -58,6 +59,7 @@ export function ChangePasswordForm({
       setNewPassword("");
       setConfirmPassword("");
       setMessage("Password updated.");
+      notifyAccountSecurityUpdated();
       onSuccess?.();
     } catch {
       setError("Password change failed.");

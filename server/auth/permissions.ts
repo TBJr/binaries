@@ -188,6 +188,9 @@ export const SYSTEM_ROLE_KEYS = [
 
 export type SystemRoleKey = (typeof SYSTEM_ROLE_KEYS)[number];
 
+export const SIGNUP_ROLE_KEYS = ["admin", "campaign-manager", "editor", "viewer", "user"] as const;
+export type SignupRoleKey = (typeof SIGNUP_ROLE_KEYS)[number];
+
 export const RESERVED_ROLE_KEYS = new Set<string>(SYSTEM_ROLE_KEYS);
 
 export const ROLE_TEMPLATES: Record<SystemRoleKey, { name: string; description: string; permissions: readonly PermissionKey[] }> = {

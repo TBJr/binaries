@@ -27,6 +27,7 @@ import {
 } from "@/components/ui/table";
 import { useAuthorization } from "@/lib/authorization";
 import { authClient } from "@/lib/auth-client";
+import { SignupCodesPanel } from "@/components/admin/SignupCodesPanel";
 
 type UserRow = {
   id: string;
@@ -54,6 +55,7 @@ export function UsersPage() {
   const { can } = useAuthorization();
   const { data: session } = authClient.useSession();
   const sessionUserId = session?.user?.id ?? "";
+  const isSuperAdmin = (session?.user?.role ?? "").split(",").includes("super-admin");
   const canDeleteUsers = can("users.delete");
   const [users, setUsers] = useState<UserRow[]>([]);
   const [stats, setStats] = useState({ total: 0, active: 0, suspended: 0, pendingInvitations: 0 });
@@ -198,6 +200,7 @@ export function UsersPage() {
             </>
           }
         />
+        {isSuperAdmin ? <SignupCodesPanel /> : null}
         <div className="grid gap-3 sm:grid-cols-4">
           {[
             ["Total", stats.total],

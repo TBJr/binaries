@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 
 import { authClient } from "@/lib/auth-client";
+import { ACCOUNT_SECURITY_UPDATED_EVENT } from "@/lib/account-security-events";
 
 export type AccountGate = {
   loading: boolean;
@@ -16,7 +17,18 @@ type RemoteGate = {
 export function useAccountGate(): AccountGate {
   const { data: session, isPending } = authClient.useSession();
   const [remote, setRemote] = useState<RemoteGate | null>(null);
+  const [refreshKey, setRefreshKey] = useState(0);
   const userId = session?.user?.id;
+
+  useEffect(() => {
+    function refreshAccountGate() {
+      setRemote(null);
+      setRefreshKey((current) => current + 1);
+    }
+
+    window.addEventListener(ACCOUNT_SECURITY_UPDATED_EVENT, refreshAccountGate);
+    return () => window.removeEventListener(ACCOUNT_SECURITY_UPDATED_EVENT, refreshAccountGate);
+  }, []);
 
   useEffect(() => {
     if (isPending || !userId) {
@@ -44,7 +56,7 @@ export function useAccountGate(): AccountGate {
     return () => {
       cancelled = true;
     };
-  }, [isPending, userId]);
+  }, [isPending, userId, refreshKey]);
 
   if (isPending) {
     return { loading: true, mustChangePassword: false, twoFactorEnforcementRequired: false };

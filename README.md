@@ -71,6 +71,7 @@ npm run bootstrap:admin
 - **Super-admin 2FA:** required after the grace deadline (`two_factor_enforcement_after` on `user`).
 - **Audit log:** `/app/admin/audit/` or `/app/admin/audit-logs/` (filter by action, event type, actor).
 - **User invitations:** `/app/admin/users/` — default expiry `USER_INVITATION_TTL_HOURS` (48).
+- **Role signup links:** super admins can generate one-time links for `user`, `viewer`, `editor`, `campaign-manager`, and `admin` at `/app/admin/users/`. Signup codes expire after 7 days; super-admin accounts are excluded from public signup.
 - **Transactional auth email:** set `AUTH_EMAIL_DELIVERY=resend`, `RESEND_API_KEY`, and `RESEND_FROM_EMAIL` in production (`npm run env:check:production` rejects `console`).
 
 (`npm run admin:bootstrap` is an alias for the same script.)

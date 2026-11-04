@@ -36,6 +36,9 @@ export const AUDIT_ACTIONS = {
   invitationAccepted: "invitation_accepted",
   invitationCreated: "invitation_created",
   invitationRevoked: "invitation_revoked",
+  signupCompleted: "signup_completed",
+  signupCodeCreated: "signup_code_created",
+  signupCodeRevoked: "signup_code_revoked",
   userCreated: "user.created",
   userUpdated: "user_updated",
   userSuspended: "user_suspended",
@@ -96,6 +99,9 @@ const ACTION_LABELS: Record<string, string> = {
   invitation_accepted: "Invitation accepted",
   invitation_created: "Invitation created",
   invitation_revoked: "Invitation revoked",
+  signup_completed: "Role-based signup completed",
+  signup_code_created: "Signup code generated",
+  signup_code_revoked: "Signup code revoked",
   "user.created": "User account created",
   user_updated: "User account updated",
   user_suspended: "User suspended",
@@ -151,7 +157,9 @@ export function categoryForAction(action: string): AuditCategory {
     return "AUTHENTICATION";
   }
   if (action.includes("password") || action.includes("two_factor")) return "SECURITY";
-  if (action.includes("invitation") || action.startsWith("user")) return "USER_MANAGEMENT";
+  if (action.includes("invitation") || action.startsWith("user") || action.startsWith("signup")) {
+    return "USER_MANAGEMENT";
+  }
   if (action.includes("role")) return "ROLE_MANAGEMENT";
   if (action.startsWith("email_") || action.startsWith("test_message_")) return "EMAIL";
   if (action.includes("draft")) return "DRAFT";

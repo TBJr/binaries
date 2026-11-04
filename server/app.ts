@@ -1,10 +1,13 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
+import { eq } from "drizzle-orm";
 
 import { auth } from "./auth/auth.js";
 import { authTrustedOrigins } from "./auth/origins.js";
 import { permissionForRequest } from "./auth/permissions.js";
+import { AUDIT_ACTIONS } from "./lib/audit-taxonomy.js";
 import { createDb, probeDatabase, type Database } from "./db/index.js";
+import { appUserRoles, user } from "./db/schema.js";
 import type { ServerEnv } from "./env.js";
 import { loadEnv } from "./env.js";
 import { accessDeniedMessage } from "./lib/brand.js";
@@ -18,6 +21,9 @@ import {
 import { auditRequestContextFromHeaders } from "./lib/request-context.js";
 import { safeErrorLabel, logStartup } from "./lib/startup-log.js";
 import { getSessionUser } from "./lib/session.js";
+import { publicRegistrationSchema } from "./validation/admin-users.js";
+import { claimSignupCode, releaseSignupCodeClaim } from "./services/signup-codes.js";
+import { recordAudit } from "./services/audit-log.js";
 import { probeRedis } from "./queue/connection.js";
 import {
   isApiPathAllowedDuringPasswordChange,
@@ -165,6 +171,100 @@ export function createSendStackApp(env: ServerEnv, options: CreateAppOptions = {
   registerCampaignRoutes(app);
   registerQueueRoutes(app);
   registerMailRoutes(app);
+
+  app.post("/api/auth/sign-up/email", async (c) => {
+    const parsed = publicRegistrationSchema.safeParse(await c.req.json().catch(() => null));
+    if (!parsed.success) {
+      return c.json({ error: parsed.error.issues[0]?.message ?? "Invalid signup details." }, 400);
+    }
+
+    const { code, roleKey, ...signup } = parsed.data;
+    const signupCode = await claimSignupCode(db, code, roleKey);
+    if (!signupCode) {
+      return c.json({ error: "This signup code is invalid, expired, used, or for another role." }, 400);
+    }
+
+    let response: Response;
+    try {
+      const headers = new Headers(c.req.raw.headers);
+      headers.set("content-type", "application/json");
+      headers.delete("content-length");
+      headers.delete("transfer-encoding");
+      const authRequest = new Request(c.req.url, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          name: signup.name,
+          email: signup.email.trim().toLowerCase(),
+          password: signup.password,
+          callbackURL: "/app/",
+        }),
+      });
+      response = await auth.handler(authRequest);
+    } catch (error) {
+      await releaseSignupCodeClaim(db, signupCode.id, signupCode.usedAt);
+      throw error;
+    }
+    if (!response.ok) {
+      await releaseSignupCodeClaim(db, signupCode.id, signupCode.usedAt);
+      return response;
+    }
+
+    const result = await response.clone().json().catch(() => null) as
+      | { user?: { id?: string } }
+      | null;
+    const userId = result?.user?.id;
+    if (!userId) {
+      await releaseSignupCodeClaim(db, signupCode.id, signupCode.usedAt);
+      return c.json({ error: "The account could not be created." }, 500);
+    }
+
+    let roleAssigned: boolean;
+    try {
+      roleAssigned = await db.transaction(async (transaction) => {
+        const [updated] = await transaction
+          .update(user)
+          .set({ role: roleKey, updatedAt: new Date() })
+          .where(eq(user.id, userId))
+          .returning({ id: user.id });
+        if (!updated) return false;
+
+        await transaction
+          .insert(appUserRoles)
+          .values({ userId, roleId: `role_${roleKey}`, assignedBy: signupCode.createdBy })
+          .onConflictDoNothing();
+        return true;
+      });
+    } catch (error) {
+      try {
+        await db.delete(user).where(eq(user.id, userId));
+      } catch (cleanupError) {
+        console.error("[signup] incomplete account cleanup failed", safeErrorLabel(cleanupError));
+      }
+      try {
+        await releaseSignupCodeClaim(db, signupCode.id, signupCode.usedAt);
+      } catch (releaseError) {
+        console.error("[signup] signup code release failed", safeErrorLabel(releaseError));
+      }
+      throw error;
+    }
+    if (!roleAssigned) {
+      await releaseSignupCodeClaim(db, signupCode.id, signupCode.usedAt);
+      return response;
+    }
+
+    try {
+      await recordAudit(db, {
+        actorUserId: userId,
+        targetUserId: userId,
+        action: AUDIT_ACTIONS.signupCompleted,
+        metadata: { roleKey, signupCodeId: signupCode.id },
+      });
+    } catch (error) {
+      console.error("[signup] audit write failed", safeErrorLabel(error));
+    }
+    return response;
+  });
 
   app.all("/api/auth/*", async (c) => {
     const outcome = await captureDatabaseFailures(async () => {

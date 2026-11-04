@@ -42,6 +42,7 @@ export function sanitizeAuditMetadata(input: Record<string, unknown> | undefined
 
 export function auditEventTypeForAction(action: string): string {
   if (action.includes("invitation")) return "invitation";
+  if (action.startsWith("signup")) return "signup";
   if (action.includes("role")) return "role";
   if (action.includes("password")) return "password";
   if (action.includes("two_factor") || action.includes("2fa")) return "two_factor";

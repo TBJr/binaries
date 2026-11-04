@@ -643,3 +643,23 @@ export const userInvitations = pgTable(
     index("user_invitations_email_idx").on(table.email),
   ],
 );
+
+export const signupCodes = pgTable(
+  "signup_codes",
+  {
+    id: text("id").primaryKey(),
+    codeHash: text("code_hash").notNull().unique(),
+    roleKey: text("role_key").notNull(),
+    createdBy: text("created_by")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    expiresAt: timestamp("expires_at").notNull(),
+    usedAt: timestamp("used_at"),
+    revokedAt: timestamp("revoked_at"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => [
+    index("signup_codes_created_by_created_at_idx").on(table.createdBy, table.createdAt),
+    index("signup_codes_expires_at_idx").on(table.expiresAt),
+  ],
+);

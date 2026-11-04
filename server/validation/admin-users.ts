@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { SIGNUP_ROLE_KEYS } from "../auth/permissions.js";
 import { validatePassword } from "../lib/password-policy.js";
 
 export const manualEmailVerificationSchema = z.object({
@@ -41,5 +42,18 @@ export const createUserSchema = z
     confirmPassword: z.string().min(1).max(128),
     roleIds: z.array(z.string().min(1)).min(1).max(5),
     status: z.enum(["active", "suspended"]),
+  })
+  .superRefine(refinePasswordWithConfirmation);
+
+export const createSignupCodeSchema = z.object({
+  roleKey: z.enum(SIGNUP_ROLE_KEYS),
+});
+
+export const publicRegistrationSchema = passwordFieldsSchema
+  .extend({
+    name: z.string().trim().min(2).max(120),
+    email: z.email(),
+    roleKey: z.enum(SIGNUP_ROLE_KEYS),
+    code: z.string().min(20).max(128),
   })
   .superRefine(refinePasswordWithConfirmation);

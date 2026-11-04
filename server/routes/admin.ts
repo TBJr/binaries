@@ -16,7 +16,7 @@ import {
   getAuditSummary,
   listAuditEvents,
 } from "../services/audit-log.js";
-import type { PermissionKey } from "../auth/permissions.js";
+import { parseRoleKeys, type PermissionKey } from "../auth/permissions.js";
 import { userHasPermission } from "../services/access-control.js";
 import { permissionsForUser } from "../services/access-control.js";
 import { recordAccessDeniedAudit } from "../services/access-denied-audit.js";
@@ -41,6 +41,12 @@ import {
   setUserStatus,
   updateAdminUser,
 } from "../services/admin.js";
+import { createSignupCodeSchema } from "../validation/admin-users.js";
+import {
+  createSignupCode,
+  listSignupCodes,
+  revokeSignupCode,
+} from "../services/signup-codes.js";
 
 const env = loadEnv();
 const { db } = createDb(env);
@@ -93,6 +99,41 @@ async function requirePermission(c: Context, permission: PermissionKey) {
 }
 
 export function registerAdminRoutes(app: Hono) {
+  app.get("/api/admin/signup-codes", async (c) => {
+    const account = await getSessionUser(c.req.raw.headers);
+    if (!account) return json(c, { error: "Unauthorized" }, 401);
+    if (!parseRoleKeys((account as { role?: string | null }).role).includes("super-admin")) {
+      return json(c, { error: "Only a super admin can manage signup codes." }, 403);
+    }
+    return json(c, await listSignupCodes(db, { role: (account as { role?: string | null }).role }));
+  });
+
+  app.post("/api/admin/signup-codes", async (c) => {
+    const account = await getSessionUser(c.req.raw.headers);
+    if (!account) return json(c, { error: "Unauthorized" }, 401);
+    const role = (account as { role?: string | null }).role;
+    if (!parseRoleKeys(role).includes("super-admin")) {
+      return json(c, { error: "Only a super admin can generate signup codes." }, 403);
+    }
+    const parsed = createSignupCodeSchema.safeParse(await c.req.json().catch(() => null));
+    if (!parsed.success) return json(c, validationError(parsed.error), 400);
+    const result = await createSignupCode(db, { id: account.id, role }, parsed.data.roleKey);
+    if ("error" in result) return json(c, { error: result.error }, result.status);
+    return json(c, result);
+  });
+
+  app.post("/api/admin/signup-codes/:id/revoke", async (c) => {
+    const account = await getSessionUser(c.req.raw.headers);
+    if (!account) return json(c, { error: "Unauthorized" }, 401);
+    const role = (account as { role?: string | null }).role;
+    if (!parseRoleKeys(role).includes("super-admin")) {
+      return json(c, { error: "Only a super admin can revoke signup codes." }, 403);
+    }
+    const result = await revokeSignupCode(db, { id: account.id, role }, c.req.param("id"));
+    if ("error" in result) return json(c, { error: result.error }, result.status);
+    return json(c, result);
+  });
+
   app.get("/api/admin/permissions", async (c) => {
     const access = await requirePermission(c, "permissions.read");
     if ("response" in access) return access.response;
