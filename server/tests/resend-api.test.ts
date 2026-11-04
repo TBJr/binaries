@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { sendResendEmail } from "../mail/resend.js";
+import { sendResendEmail, verifyResendConnection } from "../mail/resend.js";
 import { MailboxError } from "../mail/errors.js";
 
 describe("Resend API delivery", () => {
@@ -72,5 +72,18 @@ describe("Resend API delivery", () => {
         text: "Hello",
       }),
     ).rejects.toBeInstanceOf(MailboxError);
+  });
+
+  it("distinguishes an invalid key from a valid key without domain-list permission", async () => {
+    vi.stubGlobal("fetch", async () => new Response(null, { status: 401 }));
+    await expect(verifyResendConnection("re_test_key")).rejects.toMatchObject({
+      message: "Resend rejected the API key. Check that the configured key is active and correct.",
+    });
+
+    vi.stubGlobal("fetch", async () => new Response(null, { status: 403 }));
+    await expect(verifyResendConnection("re_test_key")).rejects.toMatchObject({
+      message:
+        "This Resend API key cannot list domains. A send-only key may still send email; use a full-access key to test the connection.",
+    });
   });
 });

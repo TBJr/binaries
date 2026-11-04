@@ -108,9 +108,11 @@ export async function verifyResendConnection(apiKey: string) {
   if (!response.ok) {
     await response.body?.cancel();
     throw new MailboxError(
-      response.status === 401 || response.status === 403
-        ? "Resend rejected the API key."
-        : "Resend could not verify the connection.",
+      response.status === 401
+        ? "Resend rejected the API key. Check that the configured key is active and correct."
+        : response.status === 403
+          ? "This Resend API key cannot list domains. A send-only key may still send email; use a full-access key to test the connection."
+          : "Resend could not verify the connection.",
       502,
       "SMTP_VERIFY_FAILED",
     );
