@@ -79,7 +79,7 @@ The eligible set is stored on the test-message operation. A retry of the same id
 
 `TEST_MESSAGE_MAX_LIST_RECIPIENTS` defaults to **8**. The server accepts 1–25. A missing or invalid value uses 8. If the eligible count is above the cap, the send is rejected and no SMTP call is made.
 
-The send runs in the API request, one recipient after another. Eight messages fit a normal request. This does not use BullMQ or the campaign queue. Do not raise the cap into campaign size; a larger cap can exceed the serverless time limit and is still not campaign delivery.
+The send runs in the API request with bounded concurrency (default **5** overlapping Resend submissions). That keeps multi-recipient tests inside the Vercel function budget. This does not use BullMQ or the campaign queue. Do not raise the cap into campaign size; a larger cap can still exceed the serverless time limit and is still not campaign delivery.
 
 ## SMTP
 
@@ -92,7 +92,7 @@ Each eligible address gets its own message:
 
 `submitSingleRecipientMessage` is the single-recipient transport without the environment allowlist. `submitAuthorizedMessage` still checks that allowlist for single-recipient tests.
 
-A permanent rejection for one address is stored on that submission and the loop continues. An SMTP authentication or connection failure stops the remaining addresses. Submissions already accepted stay accepted.
+A permanent rejection for one address is stored on that submission and other recipients continue. An SMTP authentication or connection failure stops scheduling further addresses; in-flight submissions may still finish. Submissions already accepted stay accepted.
 
 Wording in the product is **Resend accepted**, **Failed**, **Suppressed**, and **Skipped**. Acceptance is not inbox delivery.
 

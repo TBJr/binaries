@@ -74,16 +74,29 @@ describe("Resend API delivery", () => {
     ).rejects.toBeInstanceOf(MailboxError);
   });
 
-  it("distinguishes an invalid key from a valid key without domain-list permission", async () => {
+  it("distinguishes an invalid key from a send-only key that cannot list domains", async () => {
     vi.stubGlobal("fetch", async () => new Response(null, { status: 401 }));
     await expect(verifyResendConnection("re_test_key")).rejects.toMatchObject({
       message: "Resend rejected the API key. Check that the configured key is active and correct.",
     });
 
-    vi.stubGlobal("fetch", async () => new Response(null, { status: 403 }));
+    vi.stubGlobal(
+      "fetch",
+      async () =>
+        Response.json(
+          { name: "restricted_api_key", message: "This API key is restricted to only send emails." },
+          { status: 401 },
+        ),
+    );
+    await expect(verifyResendConnection("re_test_key")).resolves.toBeUndefined();
+
+    vi.stubGlobal(
+      "fetch",
+      async () =>
+        Response.json({ name: "restricted_api_key", message: "API key is not active" }, { status: 403 }),
+    );
     await expect(verifyResendConnection("re_test_key")).rejects.toMatchObject({
-      message:
-        "This Resend API key cannot list domains. A send-only key may still send email; use a full-access key to test the connection.",
+      message: "This Resend API key is not active. Check the key on the API Keys page.",
     });
   });
 });

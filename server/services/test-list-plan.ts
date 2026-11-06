@@ -6,7 +6,7 @@ import {
 
 export const DEFAULT_TEST_LIST_RECIPIENT_LIMIT = 8;
 export const MAX_TEST_LIST_RECIPIENT_LIMIT = 25;
-export const TEST_LIST_SEND_CONCURRENCY = 1;
+export const TEST_LIST_SEND_CONCURRENCY = 5;
 
 export type FrozenRecipient = {
   contactId: string;
@@ -102,39 +102,64 @@ export function isSharedSmtpFailure(error: unknown) {
 }
 
 /**
- * One SMTP submission at a time. A shared mailbox failure stops the rest.
- * Contacts that already have a submission row are not sent again.
+ * Bounded-concurrency SMTP submissions. A shared mailbox failure stops scheduling
+ * further recipients; in-flight submissions may still finish. Contacts that already
+ * have a submission row are not sent again. Attempts keep recipient-list order.
  */
 export async function sendEligibleRecipients(options: {
   recipients: FrozenRecipient[];
   alreadyRecorded: Set<string>;
   sendOne: (recipient: FrozenRecipient) => Promise<RecipientAttempt["outcome"]>;
+  concurrency?: number;
 }): Promise<{
   attempts: RecipientAttempt[];
   sharedFailure: string | null;
   failureCategory: SmtpFailureCategory | null;
 }> {
-  const attempts: RecipientAttempt[] = [];
+  const pending = options.recipients.filter((recipient) => !options.alreadyRecorded.has(recipient.contactId));
+  const slots: Array<RecipientAttempt | undefined> = new Array(pending.length);
   let sharedFailure: string | null = null;
   let failureCategory: SmtpFailureCategory | null = null;
+  let nextIndex = 0;
+  let stopScheduling = false;
 
-  for (const recipient of options.recipients) {
-    if (options.alreadyRecorded.has(recipient.contactId)) continue;
-    try {
-      const outcome = await options.sendOne(recipient);
-      attempts.push({ contactId: recipient.contactId, email: recipient.email, outcome });
-    } catch (error) {
-      if (isSharedSmtpFailure(error)) {
-        sharedFailure = error instanceof Error ? error.message : "The outgoing mail server could not complete the request.";
-        failureCategory = smtpFailureCategory(error);
-        attempts.push({ contactId: recipient.contactId, email: recipient.email, outcome: "unknown" });
-        break;
+  const concurrency = Math.max(
+    1,
+    Math.min(options.concurrency ?? TEST_LIST_SEND_CONCURRENCY, pending.length || 1),
+  );
+
+  async function worker() {
+    while (true) {
+      if (stopScheduling) return;
+      const current = nextIndex;
+      nextIndex += 1;
+      if (current >= pending.length) return;
+
+      const recipient = pending[current]!;
+      try {
+        const outcome = await options.sendOne(recipient);
+        slots[current] = { contactId: recipient.contactId, email: recipient.email, outcome };
+      } catch (error) {
+        if (isSharedSmtpFailure(error)) {
+          stopScheduling = true;
+          sharedFailure =
+            error instanceof Error ? error.message : "The outgoing mail server could not complete the request.";
+          failureCategory = smtpFailureCategory(error);
+          slots[current] = { contactId: recipient.contactId, email: recipient.email, outcome: "unknown" };
+          return;
+        }
+        slots[current] = { contactId: recipient.contactId, email: recipient.email, outcome: "failed" };
       }
-      attempts.push({ contactId: recipient.contactId, email: recipient.email, outcome: "failed" });
     }
   }
 
-  return { attempts, sharedFailure, failureCategory };
+  await Promise.all(Array.from({ length: Math.min(concurrency, pending.length) }, () => worker()));
+
+  return {
+    attempts: slots.filter((attempt): attempt is RecipientAttempt => attempt !== undefined),
+    sharedFailure,
+    failureCategory,
+  };
 }
 
 export function buildTestListSummary(input: {

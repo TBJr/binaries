@@ -53,7 +53,7 @@ describe("vercel api rewrites", () => {
       destination: "/api",
     });
     expect(vercel.rewrites[1]?.destination).toBe("/index.html");
-    expect(vercel.functions["api/index.ts"]?.maxDuration).toBe(30);
+    expect(vercel.functions["api/index.ts"]?.maxDuration).toBe(120);
     expect(vercel.rewrites.some((rule) => rule.destination.includes("[...path]"))).toBe(false);
   });
 

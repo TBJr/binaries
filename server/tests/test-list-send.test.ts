@@ -129,6 +129,7 @@ describe("separate test-list submissions", () => {
     const { attempts, sharedFailure } = await sendEligibleRecipients({
       recipients,
       alreadyRecorded: new Set(["1"]),
+      concurrency: 1,
       sendOne: async (recipient) => {
         calls.push(recipient.email);
         if (recipient.email === "three@example.com") return "rejected";
@@ -160,6 +161,7 @@ describe("separate test-list submissions", () => {
     const { attempts, sharedFailure } = await sendEligibleRecipients({
       recipients,
       alreadyRecorded: new Set(),
+      concurrency: 1,
       sendOne: async (recipient) => {
         calls.push(recipient.email);
         if (calls.length === 2) {
@@ -198,6 +200,59 @@ describe("separate test-list submissions", () => {
     });
     expect(JSON.stringify(metadata)).not.toContain("postgres://");
     expect(JSON.stringify(metadata)).not.toContain("password");
+  });
+
+  it("runs overlapping submissions and stops scheduling after a shared failure", async () => {
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const started: string[] = [];
+    const release = new Map<string, () => void>();
+    let firstWaveReady!: () => void;
+    const firstWave = new Promise<void>((resolve) => {
+      firstWaveReady = resolve;
+    });
+
+    const sendPromise = sendEligibleRecipients({
+      recipients,
+      alreadyRecorded: new Set(),
+      concurrency: 2,
+      sendOne: async (recipient) => {
+        started.push(recipient.email);
+        inFlight += 1;
+        maxInFlight = Math.max(maxInFlight, inFlight);
+        const wait = new Promise<void>((resolve) => {
+          release.set(recipient.email, resolve);
+        });
+        if (started.length === 2) firstWaveReady();
+        try {
+          await wait;
+          if (recipient.email === "two@example.com") {
+            throw new MailboxError("Outgoing mail server rejected the mailbox credentials.", 502, "SMTP_SEND_FAILED");
+          }
+          return "accepted";
+        } finally {
+          inFlight -= 1;
+        }
+      },
+    });
+
+    await firstWave;
+    expect(started).toEqual(["one@example.com", "two@example.com"]);
+    expect(maxInFlight).toBe(2);
+
+    // Fail first so stopScheduling is set before the other in-flight worker claims more work.
+    release.get("two@example.com")?.();
+    await Promise.resolve();
+    await Promise.resolve();
+    release.get("one@example.com")?.();
+
+    const { attempts, sharedFailure } = await sendPromise;
+    expect(started).not.toContain("three@example.com");
+    expect(sharedFailure).toContain("credentials");
+    expect(attempts).toEqual([
+      { contactId: "1", email: "one@example.com", outcome: "accepted" },
+      { contactId: "2", email: "two@example.com", outcome: "unknown" },
+    ]);
   });
 });
 

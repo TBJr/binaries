@@ -91,6 +91,18 @@ export async function sendResendEmail(
   return { accepted: true, id: result.id };
 }
 
+async function readResendErrorName(response: Response) {
+  try {
+    const body: unknown = await response.json();
+    if (body && typeof body === "object" && "name" in body && typeof body.name === "string") {
+      return body.name;
+    }
+  } catch {
+    // Ignore non-JSON error bodies; fall through to status-based handling.
+  }
+  return null;
+}
+
 export async function verifyResendConnection(apiKey: string) {
   let response: Response;
   try {
@@ -105,17 +117,27 @@ export async function verifyResendConnection(apiKey: string) {
     throw new MailboxError("Could not connect to Resend.", 502, "SMTP_VERIFY_FAILED");
   }
 
-  if (!response.ok) {
+  if (response.ok) {
     await response.body?.cancel();
-    throw new MailboxError(
-      response.status === 401
-        ? "Resend rejected the API key. Check that the configured key is active and correct."
-        : response.status === 403
-          ? "This Resend API key cannot list domains. A send-only key may still send email; use a full-access key to test the connection."
-          : "Resend could not verify the connection.",
-      502,
-      "SMTP_VERIFY_FAILED",
-    );
+    return;
   }
-  await response.body?.cancel();
+
+  const errorName = await readResendErrorName(response);
+
+  // Send-only keys cannot list domains, but they authenticate and can POST /emails.
+  if (response.status === 401 && errorName === "restricted_api_key") {
+    return;
+  }
+
+  throw new MailboxError(
+    response.status === 401
+      ? "Resend rejected the API key. Check that the configured key is active and correct."
+      : response.status === 403 && errorName === "suspended_api_key"
+        ? "This Resend API key is suspended."
+        : response.status === 403 && errorName === "restricted_api_key"
+          ? "This Resend API key is not active. Check the key on the API Keys page."
+          : "Resend could not verify the connection.",
+    502,
+    "SMTP_VERIFY_FAILED",
+  );
 }

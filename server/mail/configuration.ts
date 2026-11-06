@@ -168,7 +168,7 @@ export function loadMailConfig(
       imapConfigured,
       email: imapData.SPACEMAIL_EMAIL ?? fromEmail,
       password: imapData.SPACEMAIL_PASSWORD ?? "",
-      resendApiKey: env.RESEND_API_KEY ?? "",
+      resendApiKey: provider === "resend" ? smtpPassword : "",
       fromEmail,
       testRecipients,
       senderName,
