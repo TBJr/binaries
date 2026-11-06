@@ -142,6 +142,7 @@ Queue names default to `{QUEUE_NAMESPACE}-campaign-dispatch` and `{QUEUE_NAMESPA
 - **Auth emails:** `AUTH_EMAIL_DELIVERY=console` logs links in development.
 - **Outbound mail:** set `RESEND_API_KEY` and a Resend-verified `RESEND_FROM_EMAIL`. Use a dedicated sending subdomain with Resend's SPF/DKIM DNS records to isolate legitimate sending reputation; this is not a way to bypass spam or abuse controls.
 - **Operational mailbox:** configure `SPACEMAIL_IMAP_*`, `SPACEMAIL_EMAIL`, and `SPACEMAIL_PASSWORD` for inbox access. Resend handles outbound messages; Spacemail remains the inbound mailbox provider. Sender display name defaults to `APP_COMPANY_NAME` or `APP_NAME`.
+- **Access:** only the **super admin** can view or change mailbox provider configuration (Resend/Spacemail). The system **admin** role can send controlled test messages from Mailbox settings without seeing provider or SMTP configuration.
 - In Resend, verify your sending subdomain and publish the exact DNS records shown in its dashboard before sending. Use a valid sender on that subdomain and follow recipient-consent, unsubscribe, and provider policies.
 - Do not use original SendStack mailbox credentials in this project.
 

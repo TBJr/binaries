@@ -18,6 +18,9 @@ Ordinary lists do not appear in the Test Message selector. The server rejects a 
 | --- | --- |
 | Mark or unmark a test list | `lists.update` |
 | List test lists and send | `mailbox.send_test` |
+| Load minimal test-send context (`configured`, allowlisted recipients) | `mailbox.send_test` |
+
+The system **admin** role includes `mailbox.send_test` but not `mailbox.read` or provider management. Super admins see full mailbox configuration; admins only see the test-message UI.
 
 The browser hiding a control is not the authorization check. Both routes are enforced in the API permission middleware and again in the mailbox helper for sends.
 

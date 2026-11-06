@@ -129,8 +129,17 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return payload as T;
 }
 
+export type TestSendContext = {
+  configured: boolean;
+  testRecipients: string[];
+};
+
 export function getMailStatus() {
   return request<MailStatus>("/api/mail/status");
+}
+
+export function getTestSendContext() {
+  return request<TestSendContext>("/api/mail/test-send-context");
 }
 
 export function testMailConnection() {

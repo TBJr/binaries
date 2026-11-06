@@ -113,6 +113,7 @@ describe("test list safety", () => {
     expect(testSendSchema.safeParse({ ...message, recipientMode: "test_list" }).success).toBe(false);
     expect(permissionForRequest("/api/mail/test-send", "POST")).toBe("mailbox.send_test");
     expect(permissionForRequest("/api/mail/test-lists", "GET")).toBe("mailbox.send_test");
+    expect(permissionForRequest("/api/mail/test-send-context", "GET")).toBe("mailbox.send_test");
     expect(permissionForRequest("/api/contact-lists/list-1", "PATCH")).toBe("lists.update");
   });
 });

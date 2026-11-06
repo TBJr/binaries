@@ -62,6 +62,7 @@ describe("admin authorization", () => {
   it("maps mailbox and user routes to permissions", () => {
     expect(permissionForRequest("/api/mail/inbox", "GET")).toBe("mailbox.read");
     expect(permissionForRequest("/api/mail/test-send", "POST")).toBe("mailbox.send_test");
+    expect(permissionForRequest("/api/mail/test-send-context", "GET")).toBe("mailbox.send_test");
     expect(permissionForRequest("/api/admin/users", "GET")).toBe("users.read");
     expect(permissionForRequest("/api/admin/users", "POST")).toBe("users.create");
     expect(permissionForRequest("/api/admin/users/invite", "POST")).toBe("users.invite");

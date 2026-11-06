@@ -175,6 +175,7 @@ const ADMIN = [
   "roles.read",
   "permissions.read",
   "audit.read",
+  "mailbox.send_test",
 ] as const satisfies readonly PermissionKey[];
 
 export const SYSTEM_ROLE_KEYS = [
@@ -201,7 +202,8 @@ export const ROLE_TEMPLATES: Record<SystemRoleKey, { name: string; description: 
   },
   admin: {
     name: "Admin",
-    description: "Manage users within policy, plus campaigns, contacts, and drafts. No shared mailbox access.",
+    description:
+      "Manage users within policy, plus campaigns, contacts, and drafts. Can send controlled test messages; no shared mailbox or provider configuration.",
     permissions: ADMIN,
   },
   "campaign-manager": {
@@ -269,7 +271,13 @@ export function permissionForRequest(path: string, method: string): PermissionKe
   }
   if (normalized.startsWith("/api/mail")) {
     if (normalized === "/api/mail/send" || normalized.startsWith("/api/mail/sends")) return "mailbox.send";
-    if (normalized === "/api/mail/test-lists" || normalized.endsWith("/test-send")) return "mailbox.send_test";
+    if (
+      normalized === "/api/mail/test-lists" ||
+      normalized === "/api/mail/test-send-context" ||
+      normalized.endsWith("/test-send")
+    ) {
+      return "mailbox.send_test";
+    }
     if (normalized.endsWith("/test-connection")) return "mailbox.manage_connection";
     return "mailbox.read";
   }
