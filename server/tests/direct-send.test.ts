@@ -113,7 +113,10 @@ describe("direct send authorization and retries", () => {
     expect(permissionForRequest("/api/mail/send", "POST")).toBe("mailbox.send");
     expect(permissionForRequest("/api/mail/sends", "GET")).toBe("mailbox.send");
     expect(permissionForRequest("/api/mail/test-send", "POST")).toBe("mailbox.send_test");
+    expect(permissionForRequest("/api/mail/test-send-context", "GET")).toBe("mailbox.send_test");
+    expect(ROLE_TEMPLATES.admin.permissions).toContain("mailbox.send_test");
     expect(ROLE_TEMPLATES.admin.permissions).not.toContain("mailbox.send");
+    expect(ROLE_TEMPLATES.admin.permissions).not.toContain("mailbox.read");
     expect(ROLE_TEMPLATES["super-admin"].permissions).toContain("mailbox.send");
   });
 
