@@ -142,7 +142,7 @@ export function registerMailRoutes(app: Hono) {
   app.get("/api/mail/test-lists", async (c) => {
     const access = await requireMailbox(c, "mailbox.send_test");
     if ("response" in access) return access.response;
-    const lists = await listDesignatedTestLists(db, access.user);
+    const lists = await listDesignatedTestLists(db);
     return json(c, { lists, limit: testMessageListRecipientLimit() });
   });
 

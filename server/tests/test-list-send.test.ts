@@ -17,7 +17,7 @@ import {
   testMessageListRecipientLimit,
   type FrozenRecipient,
 } from "../services/test-list-plan.js";
-import { testListOwnerIdsForActor } from "../services/test-list-send.js";
+import { designatedTestListIdsForActor } from "../services/test-list-send.js";
 
 const message = {
   subject: "Complete Your Registration",
@@ -68,30 +68,17 @@ describe("recipient submission claims", () => {
   });
 });
 
-describe("test list owner resolution", () => {
+describe("test list visibility", () => {
   const actorOwned = { id: "list-actor", userId: "sa-1", name: "Pre-migration QA" };
   const workspaceOwned = { id: "list-ws", userId: ORG_WORKSPACE_USER_ID, name: "Shared QA" };
   const editorOwned = { id: "list-ed", userId: "editor-1", name: "Editor QA" };
   const catalog = [actorOwned, workspaceOwned, editorOwned];
+  const allIds = ["list-actor", "list-ws", "list-ed"];
 
-  function listsForActor(actor: { id: string; role?: string | null }) {
-    const owners = new Set(testListOwnerIdsForActor(actor));
-    return catalog.filter((list) => owners.has(list.userId)).map((list) => list.id);
-  }
-
-  it("lets a super-admin find pre-migration actor-owned and workspace lists", () => {
-    const owners = testListOwnerIdsForActor({ id: "sa-1", role: "super-admin" });
-    expect(owners).toEqual([ORG_WORKSPACE_USER_ID, "sa-1"]);
-    expect(listsForActor({ id: "sa-1", role: "super-admin" })).toEqual([
-      "list-actor",
-      "list-ws",
-    ]);
-  });
-
-  it("keeps editors on their own lists without the workspace pool", () => {
-    expect(testListOwnerIdsForActor({ id: "editor-1", role: "editor" })).toEqual(["editor-1"]);
-    expect(listsForActor({ id: "editor-1", role: "editor" })).toEqual(["list-ed"]);
-    expect(listsForActor({ id: "editor-1", role: "editor" })).not.toContain("list-ws");
+  it("exposes every designated test list to mailbox.send_test actors regardless of owner", () => {
+    expect(designatedTestListIdsForActor({ id: "sa-1", role: "super-admin" }, catalog)).toEqual(allIds);
+    expect(designatedTestListIdsForActor({ id: "admin-1", role: "admin" }, catalog)).toEqual(allIds);
+    expect(designatedTestListIdsForActor({ id: "editor-1", role: "editor" }, catalog)).toEqual(allIds);
   });
 });
 

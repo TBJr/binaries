@@ -19,7 +19,6 @@ import { loadActiveMailConfig } from "./mail-provider.js";
 import { TEST_SEND_LIMITS, assessTestSendRateLimit } from "../mail/rate-limit.js";
 import { submitSingleRecipientMessage } from "../mail/smtp.js";
 import { recordAuditEvent } from "./audit-log.js";
-import { getContactListById } from "./contact-lists.js";
 import {
   expireStalePendingSubmissions,
   findSubmissionByKey,
@@ -142,10 +141,15 @@ async function suppressedEmails(db: Database, userId: string, emails: string[]) 
   return new Set(rows.map((row) => normalizeEmail(row.email)));
 }
 
-async function loadOwnedTestList(db: Database, userId: string, listId: string) {
-  const list = await getContactListById(db, userId, listId);
+/**
+ * Load a designated test list by id for any mailbox.send_test actor.
+ * Members and suppressions are scoped to the list owner, not the actor.
+ */
+async function loadDesignatedTestList(db: Database, listId: string) {
+  const [list] = await db.select().from(contactLists).where(eq(contactLists.id, listId)).limit(1);
   if (!list) return { error: "not_found" as const };
   if (!list.isTestList) return { error: "not_test_list" as const };
+  const ownerId = list.userId;
   const rows = await db
     .select({
       contactId: contacts.id,
@@ -154,7 +158,7 @@ async function loadOwnedTestList(db: Database, userId: string, listId: string) {
     })
     .from(contactListMembers)
     .innerJoin(contacts, eq(contacts.id, contactListMembers.contactId))
-    .where(and(eq(contactListMembers.listId, listId), eq(contacts.userId, userId)));
+    .where(and(eq(contactListMembers.listId, listId), eq(contacts.userId, ownerId)));
   const candidates = rows.map((row) => ({
     contactId: row.contactId,
     email: row.email,
@@ -162,59 +166,36 @@ async function loadOwnedTestList(db: Database, userId: string, listId: string) {
   }));
   const suppressed = await suppressedEmails(
     db,
-    userId,
+    ownerId,
     candidates.map((candidate) => normalizeEmail(candidate.email)),
   );
-  return { list, plan: planTestListRecipients(candidates, suppressed), ownerId: userId };
+  return { list, plan: planTestListRecipients(candidates, suppressed), ownerId };
 }
 
-/** Owners to search for designated test lists for this actor (shared pool + own id). */
-export function testListOwnerIdsForActor(actor: { id: string; role?: string | null }): string[] {
-  const primary = resolveRecipientOwnerId(actor);
-  if (primary === actor.id) return [actor.id];
-  return [primary, actor.id];
+/**
+ * Catalog ids visible to a mailbox.send_test actor.
+ * Designated test lists are system-wide; list ownership does not restrict visibility.
+ */
+export function designatedTestListIdsForActor(
+  _actor: { id: string; role?: string | null },
+  catalog: readonly { id: string }[],
+): string[] {
+  return catalog.map((list) => list.id);
 }
 
-async function resolveOwnedTestList(
-  db: Database,
-  actor: { id: string; role?: string | null },
-  listId: string,
-) {
-  let sawNotTestList = false;
-  for (const ownerId of testListOwnerIdsForActor(actor)) {
-    const loaded = await loadOwnedTestList(db, ownerId, listId);
-    if (!("error" in loaded)) return loaded;
-    if (loaded.error === "not_test_list") sawNotTestList = true;
-  }
-  return { error: sawNotTestList ? ("not_test_list" as const) : ("not_found" as const) };
-}
-
-export async function listDesignatedTestLists(
-  db: Database,
-  actor: { id: string; role?: string | null },
-): Promise<TestListOption[]> {
-  const ownerIds = testListOwnerIdsForActor(actor);
-  const seen = new Set<string>();
+export async function listDesignatedTestLists(db: Database): Promise<TestListOption[]> {
+  const testLists = await db.select().from(contactLists).where(eq(contactLists.isTestList, true));
   const options: TestListOption[] = [];
 
-  for (const ownerId of ownerIds) {
-    const testLists = await db
-      .select()
-      .from(contactLists)
-      .where(and(eq(contactLists.userId, ownerId), eq(contactLists.isTestList, true)));
-
-    for (const list of testLists) {
-      if (seen.has(list.id)) continue;
-      const loaded = await loadOwnedTestList(db, ownerId, list.id);
-      if ("error" in loaded) continue;
-      seen.add(list.id);
-      options.push({
-        id: list.id,
-        name: list.name,
-        memberCount: loaded.plan.requested,
-        eligibleCount: loaded.plan.eligible.length,
-      });
-    }
+  for (const list of testLists) {
+    const loaded = await loadDesignatedTestList(db, list.id);
+    if ("error" in loaded) continue;
+    options.push({
+      id: list.id,
+      name: list.name,
+      memberCount: loaded.plan.requested,
+      eligibleCount: loaded.plan.eligible.length,
+    });
   }
 
   return options.sort((a, b) => a.name.localeCompare(b.name));
@@ -276,7 +257,7 @@ export async function sendDesignatedTestList(
     let listOwnerId = resolveRecipientOwnerId({ id: userId, role: actorRole });
 
     if (!operation) {
-      const loaded = await resolveOwnedTestList(db, { id: userId, role: actorRole }, input.testListId);
+      const loaded = await loadDesignatedTestList(db, input.testListId);
       if ("error" in loaded) {
         return loaded.error === "not_found" ? { kind: "not_found" } : { kind: "not_test_list" };
       }
@@ -359,11 +340,7 @@ export async function sendDesignatedTestList(
         console.error("[audit] test list request", error instanceof Error ? error.name : "error");
       });
     } else {
-      const owned = await resolveOwnedTestList(
-        db,
-        { id: userId, role: actorRole },
-        operation.listId ?? input.testListId,
-      );
+      const owned = await loadDesignatedTestList(db, operation.listId ?? input.testListId);
       if (!("error" in owned)) listOwnerId = owned.ownerId;
     }
 
