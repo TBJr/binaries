@@ -28,6 +28,12 @@ const MIRROR: Partial<
     result: "failure",
     actorType: "worker",
   },
+  job_send_failed: {
+    action: AUDIT_ACTIONS.queueDeliveryJobFailed,
+    category: "QUEUE",
+    result: "failure",
+    actorType: "worker",
+  },
 };
 
 export async function mirrorQueueEventToAudit(
@@ -43,12 +49,21 @@ export async function mirrorQueueEventToAudit(
   const rule = MIRROR[input.eventType];
   if (!rule) return;
   const terminal = input.metadata?.terminal;
-  if (input.eventType === "job_simulation_failed" && terminal !== true) {
+  if (
+    (input.eventType === "job_simulation_failed" || input.eventType === "job_send_failed") &&
+    terminal !== true
+  ) {
     return;
   }
 
+  const simulationOnly = input.metadata?.simulationOnly !== false;
+  let action = rule.action;
+  if (input.eventType === "campaign_enqueued" && !simulationOnly) {
+    action = AUDIT_ACTIONS.campaignDeliveryRequested;
+  }
+
   await recordAuditEvent(db, {
-    action: rule.action,
+    action,
     category: rule.category,
     result: rule.result ?? "success",
     actorUserId: input.actorUserId ?? null,
@@ -57,7 +72,7 @@ export async function mirrorQueueEventToAudit(
     resourceId: input.campaignId ?? input.deliveryJobId ?? null,
     metadata: {
       deliveryJobId: input.deliveryJobId,
-      simulationOnly: true,
+      simulationOnly,
       ...input.metadata,
     },
   });

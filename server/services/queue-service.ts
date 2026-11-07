@@ -47,6 +47,7 @@ export function serializeDeliveryJob(row: typeof deliveryJobs.$inferSelect) {
     lastErrorCode: row.lastErrorCode,
     lastErrorMessage: row.lastErrorMessage,
     skipReason: row.skipReason,
+    providerMessageId: row.providerMessageId,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };
@@ -68,6 +69,8 @@ export async function getQueueOverview(db: Database, userId: string) {
     processing: 0,
     simulation_completed: 0,
     simulation_failed: 0,
+    delivered: 0,
+    send_failed: 0,
     skipped: 0,
     retry_wait: 0,
     cancelled: 0,
@@ -82,7 +85,13 @@ export async function getQueueOverview(db: Database, userId: string) {
     }
   }
 
-  return { stats, queueEnabled: isQueueEnabled(), simulationOnly: true };
+  const queueEnv = loadQueueEnv();
+  return {
+    stats,
+    queueEnabled: isQueueEnabled(),
+    simulationOnly: queueEnv.QUEUE_SIMULATION_ONLY,
+    dailySendCap: queueEnv.QUEUE_DAILY_SEND_CAP,
+  };
 }
 
 export async function listDeliveryJobs(
@@ -281,7 +290,11 @@ export async function enqueueCampaignForSimulation(
       campaignId,
       actorUserId: userId,
       eventType: "campaign_updated",
-      metadata: { action: "enqueue_simulation", jobs: jobValues.length, generation: nextGeneration },
+      metadata: {
+        action: env.QUEUE_SIMULATION_ONLY ? "enqueue_simulation" : "enqueue_delivery",
+        jobs: jobValues.length,
+        generation: nextGeneration,
+      },
     });
 
     await recordQueueEvent(tx, {
@@ -291,7 +304,7 @@ export async function enqueueCampaignForSimulation(
       metadata: {
         generation: nextGeneration,
         jobs: jobValues.length,
-        simulationOnly: true,
+        simulationOnly: env.QUEUE_SIMULATION_ONLY,
       },
     });
 
@@ -325,12 +338,21 @@ export async function dispatchCampaignJobs(db: Database, campaignId: string) {
   if (campaign.status === "cancelled") return { published: 0 };
   if (campaign.queuePaused) return { published: 0 };
 
+  const queueEnv = loadQueueEnv();
+  const nextStatus = queueEnv.QUEUE_SIMULATION_ONLY ? "processing" : "sending";
   await db
     .update(campaigns)
-    .set({ status: "processing", updatedAt: new Date() })
+    .set({ status: nextStatus, updatedAt: new Date() })
     .where(and(eq(campaigns.id, campaignId), eq(campaigns.status, "queued")));
 
-  const result = await publishPendingDeliveryJobs(db, campaignId);
+  let published = 0;
+  const maxIterations = 50;
+  for (let i = 0; i < maxIterations; i += 1) {
+    const batch = await publishPendingDeliveryJobs(db, campaignId);
+    published += batch.published;
+    if (batch.published === 0) break;
+  }
+  const result = { published };
   await recordQueueEvent(db, {
     campaignId,
     eventType: "campaign_dispatch_completed",
@@ -339,7 +361,13 @@ export async function dispatchCampaignJobs(db: Database, campaignId: string) {
   return result;
 }
 
+/** @deprecated Use updateCampaignDeliveryProgress */
 export async function updateCampaignSimulationProgress(db: Database, campaignId: string) {
+  return updateCampaignDeliveryProgress(db, campaignId);
+}
+
+export async function updateCampaignDeliveryProgress(db: Database, campaignId: string) {
+  const queueEnv = loadQueueEnv();
   const counts = await db
     .select({
       status: deliveryJobs.status,
@@ -354,12 +382,43 @@ export async function updateCampaignSimulationProgress(db: Database, campaignId:
   const terminal =
     (byStatus.get("simulation_completed") ?? 0) +
     (byStatus.get("simulation_failed") ?? 0) +
+    (byStatus.get("delivered") ?? 0) +
+    (byStatus.get("send_failed") ?? 0) +
     (byStatus.get("skipped") ?? 0) +
     (byStatus.get("cancelled") ?? 0);
 
   if (total > 0 && terminal >= total) {
-    const failed = byStatus.get("simulation_failed") ?? 0;
-    const nextStatus = failed > 0 ? "simulation_failed" : "simulation_completed";
+    if (queueEnv.QUEUE_SIMULATION_ONLY) {
+      const failed = byStatus.get("simulation_failed") ?? 0;
+      const nextStatus = failed > 0 ? "simulation_failed" : "simulation_completed";
+      await db
+        .update(campaigns)
+        .set({ status: nextStatus, updatedAt: new Date() })
+        .where(eq(campaigns.id, campaignId));
+      try {
+        await recordAuditEvent(db, {
+          action:
+            failed > 0
+              ? AUDIT_ACTIONS.campaignSimulationFailed
+              : AUDIT_ACTIONS.campaignSimulationCompleted,
+          category: "CAMPAIGN",
+          actorType: "worker",
+          resourceType: "campaign",
+          resourceId: campaignId,
+          result: failed > 0 ? "failure" : "success",
+          metadata: { simulationOnly: true, failedJobs: failed, totalJobs: total },
+        });
+      } catch (error) {
+        console.error(
+          "[audit] campaign simulation summary failed",
+          error instanceof Error ? error.message : "unknown",
+        );
+      }
+      return;
+    }
+
+    const failed = byStatus.get("send_failed") ?? 0;
+    const nextStatus = failed > 0 ? "failed" : "completed";
     await db
       .update(campaigns)
       .set({ status: nextStatus, updatedAt: new Date() })
@@ -367,18 +426,24 @@ export async function updateCampaignSimulationProgress(db: Database, campaignId:
     try {
       await recordAuditEvent(db, {
         action:
-          failed > 0
-            ? AUDIT_ACTIONS.campaignSimulationFailed
-            : AUDIT_ACTIONS.campaignSimulationCompleted,
+          failed > 0 ? AUDIT_ACTIONS.campaignDeliveryFailed : AUDIT_ACTIONS.campaignDeliveryCompleted,
         category: "CAMPAIGN",
         actorType: "worker",
         resourceType: "campaign",
         resourceId: campaignId,
         result: failed > 0 ? "failure" : "success",
-        metadata: { simulationOnly: true, failedJobs: failed, totalJobs: total },
+        metadata: {
+          simulationOnly: false,
+          failedJobs: failed,
+          deliveredJobs: byStatus.get("delivered") ?? 0,
+          totalJobs: total,
+        },
       });
     } catch (error) {
-      console.error("[audit] campaign simulation summary failed", error instanceof Error ? error.message : "unknown");
+      console.error(
+        "[audit] campaign delivery summary failed",
+        error instanceof Error ? error.message : "unknown",
+      );
     }
   }
 }
@@ -386,7 +451,7 @@ export async function updateCampaignSimulationProgress(db: Database, campaignId:
 export async function pauseCampaignQueue(db: Database, userId: string, campaignId: string) {
   const campaign = await getCampaignById(db, userId, campaignId);
   if (!campaign) return null;
-  if (!["queued", "processing"].includes(campaign.status)) {
+  if (!["queued", "processing", "sending"].includes(campaign.status)) {
     throw new Error("NOT_PAUSABLE");
   }
 
@@ -456,6 +521,7 @@ export async function cancelCampaignQueue(db: Database, userId: string, campaign
     "scheduled",
     "queued",
     "processing",
+    "sending",
     "paused",
   ];
   if (!cancellable.includes(campaign.status)) {
@@ -501,7 +567,7 @@ export async function retryDeliveryJob(db: Database, userId: string, jobId: stri
     .limit(1);
 
   if (!job) return null;
-  if (!["simulation_failed", "retry_wait"].includes(job.status)) {
+  if (!["simulation_failed", "send_failed", "retry_wait"].includes(job.status)) {
     throw new Error("NOT_RETRYABLE");
   }
 
@@ -550,7 +616,7 @@ export async function getCampaignQueueSummary(db: Database, userId: string, camp
       enqueuedAt: campaign.enqueuedAt?.toISOString() ?? null,
     },
     jobCounts: counts,
-    simulationOnly: true,
+    simulationOnly: loadQueueEnv().QUEUE_SIMULATION_ONLY,
   };
 }
 

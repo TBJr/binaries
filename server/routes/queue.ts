@@ -5,6 +5,7 @@ import { loadEnv } from "../env.js";
 import { validationError } from "../lib/http-errors.js";
 import { getSessionUser } from "../lib/session.js";
 import { isQueueEnabled } from "../queue/connection.js";
+import { loadQueueEnv } from "../queue/configuration.js";
 import {
   enqueueCampaignForSimulation,
   getCampaignQueueSummary,
@@ -112,7 +113,7 @@ export function registerQueueRoutes(app: Hono) {
         created: result.created,
         totalJobs: result.totalJobs,
         idempotent: result.idempotent,
-        simulationOnly: true,
+        simulationOnly: loadQueueEnv().QUEUE_SIMULATION_ONLY,
       });
     } catch (error) {
       if (error instanceof Error) {
@@ -123,7 +124,7 @@ export function registerQueueRoutes(app: Hono) {
           return c.json({ error: "Campaign content is incomplete" }, 400);
         }
         if (error.message === "NO_ELIGIBLE_RECIPIENTS") {
-          return c.json({ error: "No eligible recipients to simulate" }, 400);
+          return c.json({ error: "No eligible recipients to enqueue" }, 400);
         }
       }
       throw error;

@@ -12,10 +12,16 @@ import {
 type CampaignQueueActionsProps = {
   campaign: Campaign;
   queueEnabled: boolean;
+  simulationOnly?: boolean;
   onUpdated?: () => void;
 };
 
-export function CampaignQueueActions({ campaign, queueEnabled, onUpdated }: CampaignQueueActionsProps) {
+export function CampaignQueueActions({
+  campaign,
+  queueEnabled,
+  simulationOnly = true,
+  onUpdated,
+}: CampaignQueueActionsProps) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -33,33 +39,41 @@ export function CampaignQueueActions({ campaign, queueEnabled, onUpdated }: Camp
   };
 
   const canActivate = ["ready", "scheduled"].includes(campaign.status);
-  const canPause = ["queued", "processing"].includes(campaign.status);
+  const canPause = ["queued", "processing", "sending"].includes(campaign.status);
   const canResume = campaign.status === "paused";
+
+  const enqueue = async () => {
+    if (!simulationOnly) {
+      const confirmed = window.confirm(
+        "This will send real emails to every eligible recipient through the configured mail provider. Continue?",
+      );
+      if (!confirmed) return;
+    }
+    await enqueueCampaignSimulation(campaign.id);
+  };
 
   return (
     <div className="space-y-2">
       <p className="text-xs text-muted-foreground">
-        Simulation only — no SMTP or outbound email delivery occurs in Phase 7.
+        {simulationOnly
+          ? "Simulation only — no SMTP or outbound email delivery occurs."
+          : "Live delivery — workers will send real messages via the configured mail provider. Daily volume is capped by QUEUE_DAILY_SEND_CAP."}
       </p>
       {error && <p className="text-sm text-destructive">{error}</p>}
       <div className="flex flex-wrap gap-2">
         {canActivate && (
-          <Button
-            size="sm"
-            disabled={busy || !queueEnabled}
-            onClick={() => run(() => enqueueCampaignSimulation(campaign.id))}
-          >
-            Activate simulation queue
+          <Button size="sm" disabled={busy || !queueEnabled} onClick={() => run(enqueue)}>
+            {simulationOnly ? "Activate simulation queue" : "Start campaign delivery"}
           </Button>
         )}
         {canPause && (
           <Button size="sm" variant="outline" disabled={busy} onClick={() => run(() => pauseCampaignQueue(campaign.id))}>
-            Pause simulation
+            {simulationOnly ? "Pause simulation" : "Pause delivery"}
           </Button>
         )}
         {canResume && (
           <Button size="sm" variant="outline" disabled={busy} onClick={() => run(() => resumeCampaignQueue(campaign.id))}>
-            Resume simulation
+            {simulationOnly ? "Resume simulation" : "Resume delivery"}
           </Button>
         )}
       </div>

@@ -2,7 +2,7 @@
 
 Settings → Test Message can send the same rich-text message to one allowlisted address, or as separate SMTP submissions to a recipient list that an authorized user has marked as a **test list**.
 
-This is a controlled test. It does not enable campaign delivery. Phase 8 remains disabled: there is no campaign worker, schedule, tracking, or unlimited batch send.
+This is a controlled test for Settings QA. It runs inside the Vercel API request (120s budget) and stays capped (default 8 recipients, max 25). **Daily volume of ~2000 messages belongs on campaign delivery** via BullMQ workers (`QUEUE_SIMULATION_ONLY=false`), not Settings test-list sends.
 
 ## How a list becomes a test list
 

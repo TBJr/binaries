@@ -5,6 +5,8 @@ export type DeliveryJobStatus =
   | "retry_wait"
   | "simulation_completed"
   | "simulation_failed"
+  | "delivered"
+  | "send_failed"
   | "skipped"
   | "cancelled";
 
@@ -21,6 +23,7 @@ export type DeliveryJob = {
   lastErrorCode: string | null;
   lastErrorMessage: string | null;
   skipReason: string | null;
+  providerMessageId?: string | null;
   updatedAt: string;
   recipientEmail: string | null;
 };
@@ -53,7 +56,13 @@ export function fetchQueueOverview() {
     stats: Record<string, number>;
     queueEnabled: boolean;
     simulationOnly: boolean;
+    dailySendCap?: number;
   }>("/api/queue/overview");
+}
+
+/** @deprecated Prefer enqueueCampaignQueue — name kept for call sites. */
+export function enqueueCampaignQueue(campaignId: string) {
+  return enqueueCampaignSimulation(campaignId);
 }
 
 export function fetchQueueJobs(params: {

@@ -61,21 +61,29 @@ export function QueuePage() {
     <>
       <PageMeta
         title="Queue | Binaries.nl"
-        description="Monitor simulated campaign processing jobs."
+        description="Monitor campaign queue processing jobs."
         canonicalPath="/app/queue/"
       />
       <AppPageContainer>
         <PageHeader
           title="Queue"
-          description="Monitor and manage campaign simulation processing. No emails are sent."
+          description={
+            overview?.simulationOnly === false
+              ? "Monitor campaign delivery jobs processed by BullMQ workers."
+              : "Monitor and manage campaign simulation processing. No emails are sent."
+          }
           notice={
             overview
-              ? `Queue ${overview.queueEnabled ? "enabled" : "disabled"} · Simulation-only mode`
+              ? `Queue ${overview.queueEnabled ? "enabled" : "disabled"} · ${
+                  overview.simulationOnly ? "Simulation-only mode" : "Live delivery mode"
+                }${overview.dailySendCap ? ` · Daily cap ${overview.dailySendCap}` : ""}`
               : undefined
           }
         />
 
-        {overview ? <QueueStats stats={overview.stats} /> : null}
+        {overview ? (
+          <QueueStats stats={overview.stats} simulationOnly={overview.simulationOnly} />
+        ) : null}
 
         <div className="flex flex-wrap gap-2">
           <select
@@ -93,6 +101,8 @@ export function QueuePage() {
             <option value="processing">Processing</option>
             <option value="simulation_completed">Simulation completed</option>
             <option value="simulation_failed">Simulation failed</option>
+            <option value="delivered">Delivered</option>
+            <option value="send_failed">Send failed</option>
             <option value="skipped">Skipped</option>
           </select>
         </div>
@@ -106,8 +116,12 @@ export function QueuePage() {
         ) : jobs.length === 0 ? (
           <EmptyState
             icon={ListOrdered}
-            title="No simulation jobs"
-            description="Activate a ready campaign from its details page to create simulation jobs."
+            title={overview?.simulationOnly === false ? "No delivery jobs" : "No simulation jobs"}
+            description={
+              overview?.simulationOnly === false
+                ? "Start delivery from a ready campaign’s details page."
+                : "Activate a ready campaign from its details page to create simulation jobs."
+            }
           />
         ) : (
           <>

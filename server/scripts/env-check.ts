@@ -148,11 +148,11 @@ function checkRedis(values: Record<string, string>, production: boolean): Findin
     return findings;
   }
   const q = queue.data;
-  if (q.QUEUE_SIMULATION_ONLY !== true) {
+  if (q.QUEUE_SIMULATION_ONLY === false) {
     findings.push({
       key: "QUEUE_SIMULATION_ONLY",
-      status: "INVALID",
-      detail: "Must remain true (simulation-only campaigns)",
+      status: "VALID",
+      detail: `Live delivery enabled; daily cap ${q.QUEUE_DAILY_SEND_CAP}. Ensure worker has RESEND_* or SMTP_* credentials.`,
     });
   }
   if (q.QUEUE_ENABLED && q.REDIS_URL?.trim()) {

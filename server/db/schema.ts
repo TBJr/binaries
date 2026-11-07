@@ -352,6 +352,7 @@ export const deliveryJobs = pgTable(
     lastErrorCode: text("last_error_code"),
     lastErrorMessage: text("last_error_message"),
     skipReason: text("skip_reason"),
+    providerMessageId: text("provider_message_id"),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at")
       .defaultNow()
