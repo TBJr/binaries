@@ -1,7 +1,7 @@
 import { Worker } from "bullmq";
 
 import { closeDb, createDb } from "../db/index.js";
-import { loadEnv } from "../env.js";
+import { loadWorkerEnv } from "../env.js";
 import { safeErrorLabel } from "../lib/startup-log.js";
 import { getQueueNames, loadQueueEnv } from "../queue/configuration.js";
 import {
@@ -13,7 +13,7 @@ import { closeQueues } from "../queue/queues.js";
 import { dispatchCampaignJobs } from "../services/queue-service.js";
 import { reconcileOrphanedPendingJobs } from "../services/queue-reconciliation.js";
 
-const env = loadEnv();
+const env = loadWorkerEnv();
 const queueEnv = loadQueueEnv();
 const { db } = createDb(env);
 

@@ -25,8 +25,8 @@ Never prefix secrets with `VITE_`.
 | `APP_COMPANY_NAME` | Branding / default sender name | Optional | Vercel API, Railway | No | Used when `SPACEMAIL_SENDER_NAME` is empty. |
 | `VITE_APP_URL` | Public site origin for canonical URLs | **Required** (build) | Vercel (build + runtime reference) | No | Must match `FRONTEND_URL` / `BETTER_AUTH_URL`. HTTPS only. Browser auth requests use the current page origin. |
 | `VITE_CONTACT_EMAIL` | Public contact on marketing pages | Optional | Vercel (build) | No | Safe to expose in frontend bundle. |
-| `FRONTEND_URL` | CORS + Better Auth trusted origins base | **Required** | Vercel API, Railway | No | Same origin as `VITE_APP_URL`. Apex/www pairs added automatically for public hostnames. |
-| `BETTER_AUTH_URL` | Better Auth `baseURL` | **Required** | Vercel API, Railway | No | Must match `FRONTEND_URL` origin. Cookies use `secure` when URL is `https://`. |
+| `FRONTEND_URL` | CORS + Better Auth trusted origins base | **Required** (API) | Vercel API | No | Same origin as `VITE_APP_URL`. Apex/www pairs added automatically for public hostnames. Not required on Railway worker/dispatcher. |
+| `BETTER_AUTH_URL` | Better Auth `baseURL` | **Required** (API) | Vercel API | No | Must match `FRONTEND_URL` origin. Cookies use `secure` when URL is `https://`. Not required on Railway worker/dispatcher. |
 | `BETTER_AUTH_SECRET` | Session/signing secret | **Required** | Vercel API, Railway | **Yes** | ≥ 32 characters; unique per environment; rotate invalidates sessions. |
 | `AUTH_EMAIL_DELIVERY` | Auth email transport | **Required** | Vercel API, Railway | No | Production must be `smtp` or `resend` (`env:check:production` rejects `console`). |
 | `SMTP_HOST` | Auth transactional SMTP host | Required if `AUTH_EMAIL_DELIVERY=smtp` | Vercel API, Railway | No | Separate from `SPACEMAIL_*` (operational mailbox). |
@@ -89,19 +89,19 @@ BullMQ **workers do not run inside Vercel Functions**; enqueue/API operations us
 
 ### Railway — email processing worker
 
-`loadEnv()` + `loadQueueEnv()` — same **shared** credentials as API:
+`loadWorkerEnv()` + `loadQueueEnv()` — core DB/queue credentials (public auth URLs not required):
 
-- `DATABASE_URL`, `BETTER_AUTH_SECRET`, `BETTER_AUTH_URL`, `FRONTEND_URL`
-- `AUTH_EMAIL_DELIVERY` and its selected provider variables
+- `DATABASE_URL`, `BETTER_AUTH_SECRET`
+- `AUTH_EMAIL_DELIVERY` and its selected provider variables (for live send)
 - `QUEUE_ENABLED=true`, `REDIS_URL`, `QUEUE_NAMESPACE`
 - For **live** delivery: `QUEUE_SIMULATION_ONLY=false`, `QUEUE_DAILY_SEND_CAP=2000`, `QUEUE_MAX_JOBS_PER_SECOND=2`, plus `RESEND_API_KEY` + `RESEND_FROM_EMAIL` (or SMTP_*)
 - For **simulation**: `QUEUE_SIMULATION_ONLY=true` (no outbound mail required on the worker)
 
-Does **not** need `VITE_*`. `SPACEMAIL_*` only if IMAP sent-copy is required (not used for campaign bulk).
+Does **not** need `VITE_*`, `BETTER_AUTH_URL`, or `FRONTEND_URL`. `SPACEMAIL_*` only if IMAP sent-copy is required (not used for campaign bulk).
 
 ### Railway — campaign dispatcher
 
-Same as worker for queue/Redis. Does not send mail itself.
+Same as worker for queue/Redis (`loadWorkerEnv()`). Does not send mail itself.
 
 ## Deployment compatibility notes
 
