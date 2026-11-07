@@ -10,7 +10,9 @@ Recipient lists live in `contact_lists`. Membership is `contact_list_members`. M
 
 Users with `lists.update` can mark or unmark a list from Contact lists or the list details page. The API is `PATCH /api/contact-lists/:id` with `{ "isTestList": true }`. `lists.create` can set the flag when the list is created. The server records `recipient_list_marked_test` or `recipient_list_unmarked_test`.
 
-Ordinary lists do not appear in the Test Message selector. The server rejects a send if the list is missing, owned by someone else, or not marked as a test list.
+Ordinary lists do not appear in the Test Message selector. The server rejects a send if the list is missing or not marked as a test list.
+
+Anyone with `mailbox.send_test` can list and send to **every** designated test list in the system, regardless of which user owns the list. Marking or unmarking a list still requires `lists.update` on a list the actor can edit (Contact Lists ownership is unchanged).
 
 ## Permissions
 
@@ -58,17 +60,17 @@ Test list:
 }
 ```
 
-The server loads members from the database. A body that includes `recipients`, `to`, `cc`, or `bcc` arrays is rejected. Test-list addresses do not have to be on the environment allowlist. The test-list flag, ownership, and eligibility rules are the authorization.
+The server loads members from the database. A body that includes `recipients`, `to`, `cc`, or `bcc` arrays is rejected. Test-list addresses do not have to be on the environment allowlist. The test-list flag and eligibility rules are the authorization; list ownership does not restrict which designated lists a `mailbox.send_test` actor may use.
 
 ## Eligibility
 
 Evaluated on the server when the send starts, using the same rules as campaign eligibility:
 
 - The list must be `is_test_list`
-- The contact must belong to the signed-in user
+- The contact must belong to the **list owner** (members and suppressions are scoped to that owner)
 - The address must be valid
 - Subscription status must be `subscribed`
-- The address must not be in `email_suppressions`
+- The address must not be in `email_suppressions` for the list owner
 - Duplicate addresses collapse to one contact
 - Unsubscribed, pending, unknown, and invalid addresses are skipped
 
