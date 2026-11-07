@@ -4,7 +4,7 @@ import { eq } from "drizzle-orm";
 
 import { closeDb, createDb } from "../db/index.js";
 import { deliveryJobs } from "../db/schema.js";
-import { loadEnv } from "../env.js";
+import { loadWorkerEnv } from "../env.js";
 import { safeErrorLabel } from "../lib/startup-log.js";
 import { getQueueNames, loadQueueEnv } from "../queue/configuration.js";
 import {
@@ -24,7 +24,7 @@ import {
 import { recordQueueEvent } from "../services/queue-events.js";
 import { updateCampaignDeliveryProgress } from "../services/queue-service.js";
 
-const env = loadEnv();
+const env = loadWorkerEnv();
 const queueEnv = loadQueueEnv();
 const { db } = createDb(env);
 

@@ -1,7 +1,7 @@
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 
-import type { ServerEnv } from "../env.js";
+import type { DbEnv } from "../env.js";
 import { describeDatabaseTarget } from "../lib/database-url.js";
 import {
   classifyDatabaseError,
@@ -20,7 +20,7 @@ const globalForDb = globalThis as typeof globalThis & {
   kivorentaDb?: DbBundle;
 };
 
-function connectTimeoutSeconds(env: ServerEnv, serverless: boolean) {
+function connectTimeoutSeconds(env: DbEnv, serverless: boolean) {
   if (env.DATABASE_CONNECT_TIMEOUT_MS) {
     return Math.min(30, Math.max(2, Math.ceil(env.DATABASE_CONNECT_TIMEOUT_MS / 1000)));
   }
@@ -32,7 +32,7 @@ function connectTimeoutSeconds(env: ServerEnv, serverless: boolean) {
  * Route modules, Better Auth, and the Hono app all call this; a new pool per
  * caller would open a separate Neon connection set for every feature.
  */
-export function createDb(env: ServerEnv, options?: { cache?: boolean }) {
+export function createDb(env: DbEnv, options?: { cache?: boolean }) {
   const useCache = options?.cache ?? process.env.NODE_ENV !== "test";
   if (useCache && globalForDb.kivorentaDb) {
     return globalForDb.kivorentaDb;
