@@ -18,8 +18,9 @@ import {
   peekDatabaseFailure,
   publicApiError,
 } from "./lib/db-errors.js";
+import { withDatabaseDeadline } from "./lib/database-deadline.js";
 import { auditRequestContextFromHeaders } from "./lib/request-context.js";
-import { safeErrorLabel, logStartup } from "./lib/startup-log.js";
+import { logStartup, safeErrorLabel } from "./lib/startup-log.js";
 import { getSessionUser } from "./lib/session.js";
 import { publicRegistrationSchema } from "./validation/admin-users.js";
 import { claimSignupCode, releaseSignupCodeClaim } from "./services/signup-codes.js";
@@ -59,6 +60,8 @@ export type CreateAppOptions = {
 
 export function createSendStackApp(env: ServerEnv, options: CreateAppOptions = {}): SendStackApp {
   const { db } = createDb(env);
+  /** Prefer this after invalidateDbCache so middleware does not keep a dead client. */
+  const liveDb = () => createDb(env).db;
   const app = new Hono();
 
   const allowedBrowserOrigins = new Set(authTrustedOrigins(env.FRONTEND_URL));
@@ -82,7 +85,7 @@ export function createSendStackApp(env: ServerEnv, options: CreateAppOptions = {
       await next();
       try {
         await recordApiMutationAudit({
-          db,
+          db: liveDb(),
           method: c.req.method,
           path: c.req.path,
           status: c.res.status,
@@ -104,9 +107,56 @@ export function createSendStackApp(env: ServerEnv, options: CreateAppOptions = {
     ) {
       return next();
     }
-    let account;
+    let account: Awaited<ReturnType<typeof getSessionUser>>;
     try {
       account = await getSessionUser(c.req.raw.headers);
+      if (account && (account as { banned?: boolean | null }).banned) {
+        return c.json({ error: accessDeniedMessage() }, 403);
+      }
+      if (account) {
+        const signedIn = account;
+        const security = await withDatabaseDeadline(
+          () => loadAccountSecurityState(liveDb(), signedIn.id),
+          "account-security",
+        );
+        if (security?.mustChangePassword && !isApiPathAllowedDuringPasswordChange(c.req.path, c.req.method)) {
+          return c.json(
+            { error: "Change your password before continuing.", code: "PASSWORD_CHANGE_REQUIRED" },
+            403,
+          );
+        }
+        if (
+          security?.twoFactorEnforcementRequired &&
+          !isApiPathAllowedDuringTwoFactorSetup(c.req.path, c.req.method)
+        ) {
+          return c.json(
+            {
+              error: "Configure two-factor authentication before continuing.",
+              code: "TWO_FACTOR_SETUP_REQUIRED",
+            },
+            403,
+          );
+        }
+      }
+      const permission = permissionForRequest(c.req.path, c.req.method);
+      if (!permission) return next();
+      if (!account) return c.json({ error: "Unauthorized" }, 401);
+      const signedIn = account;
+      const allowed = await withDatabaseDeadline(
+        () => userHasPermission(liveDb(), signedIn, permission),
+        "permission-check",
+      );
+      if (!allowed) {
+        void recordAccessDeniedAudit(liveDb(), {
+          actorUserId: signedIn.id,
+          actorEmail: signedIn.email,
+          permission,
+          path: c.req.path,
+          headers: c.req.raw.headers,
+        });
+        return c.json({ error: "You do not have permission to do that." }, 403);
+      }
+      return next();
     } catch (error) {
       if (error instanceof DatabaseUnavailableError) {
         const mapped = publicApiError(error);
@@ -115,45 +165,6 @@ export function createSendStackApp(env: ServerEnv, options: CreateAppOptions = {
       }
       throw error;
     }
-    if (account && (account as { banned?: boolean | null }).banned) {
-      return c.json({ error: accessDeniedMessage() }, 403);
-    }
-    if (account) {
-      const security = await loadAccountSecurityState(db, account.id);
-      if (security?.mustChangePassword && !isApiPathAllowedDuringPasswordChange(c.req.path, c.req.method)) {
-        return c.json(
-          { error: "Change your password before continuing.", code: "PASSWORD_CHANGE_REQUIRED" },
-          403,
-        );
-      }
-      if (
-        security?.twoFactorEnforcementRequired &&
-        !isApiPathAllowedDuringTwoFactorSetup(c.req.path, c.req.method)
-      ) {
-        return c.json(
-          {
-            error: "Configure two-factor authentication before continuing.",
-            code: "TWO_FACTOR_SETUP_REQUIRED",
-          },
-          403,
-        );
-      }
-    }
-    const permission = permissionForRequest(c.req.path, c.req.method);
-    if (!permission) return next();
-    if (!account) return c.json({ error: "Unauthorized" }, 401);
-    const allowed = await userHasPermission(db, account, permission);
-    if (!allowed) {
-      void recordAccessDeniedAudit(db, {
-        actorUserId: account.id,
-        actorEmail: account.email,
-        permission,
-        path: c.req.path,
-        headers: c.req.raw.headers,
-      });
-      return c.json({ error: "You do not have permission to do that." }, 403);
-    }
-    return next();
   });
 
   registerHealthRoutes(app, {
@@ -179,7 +190,8 @@ export function createSendStackApp(env: ServerEnv, options: CreateAppOptions = {
     }
 
     const { code, roleKey, ...signup } = parsed.data;
-    const signupCode = await claimSignupCode(db, code, roleKey);
+    const signupDb = liveDb();
+    const signupCode = await claimSignupCode(signupDb, code, roleKey);
     if (!signupCode) {
       return c.json({ error: "This signup code is invalid, expired, used, or for another role." }, 400);
     }
@@ -200,13 +212,14 @@ export function createSendStackApp(env: ServerEnv, options: CreateAppOptions = {
           callbackURL: "/app/",
         }),
       });
-      response = await auth.handler(authRequest);
+      response = await withDatabaseDeadline(() => auth.handler(authRequest), "auth-signup");
     } catch (error) {
-      await releaseSignupCodeClaim(db, signupCode.id, signupCode.usedAt);
+      await releaseSignupCodeClaim(liveDb(), signupCode.id, signupCode.usedAt);
       throw error;
     }
+    const dbAfterAuth = liveDb();
     if (!response.ok) {
-      await releaseSignupCodeClaim(db, signupCode.id, signupCode.usedAt);
+      await releaseSignupCodeClaim(dbAfterAuth, signupCode.id, signupCode.usedAt);
       return response;
     }
 
@@ -215,13 +228,13 @@ export function createSendStackApp(env: ServerEnv, options: CreateAppOptions = {
       | null;
     const userId = result?.user?.id;
     if (!userId) {
-      await releaseSignupCodeClaim(db, signupCode.id, signupCode.usedAt);
+      await releaseSignupCodeClaim(dbAfterAuth, signupCode.id, signupCode.usedAt);
       return c.json({ error: "The account could not be created." }, 500);
     }
 
     let roleAssigned: boolean;
     try {
-      roleAssigned = await db.transaction(async (transaction) => {
+      roleAssigned = await dbAfterAuth.transaction(async (transaction) => {
         const [updated] = await transaction
           .update(user)
           .set({ role: roleKey, updatedAt: new Date() })
@@ -237,24 +250,24 @@ export function createSendStackApp(env: ServerEnv, options: CreateAppOptions = {
       });
     } catch (error) {
       try {
-        await db.delete(user).where(eq(user.id, userId));
+        await liveDb().delete(user).where(eq(user.id, userId));
       } catch (cleanupError) {
         console.error("[signup] incomplete account cleanup failed", safeErrorLabel(cleanupError));
       }
       try {
-        await releaseSignupCodeClaim(db, signupCode.id, signupCode.usedAt);
+        await releaseSignupCodeClaim(liveDb(), signupCode.id, signupCode.usedAt);
       } catch (releaseError) {
         console.error("[signup] signup code release failed", safeErrorLabel(releaseError));
       }
       throw error;
     }
     if (!roleAssigned) {
-      await releaseSignupCodeClaim(db, signupCode.id, signupCode.usedAt);
+      await releaseSignupCodeClaim(liveDb(), signupCode.id, signupCode.usedAt);
       return response;
     }
 
     try {
-      await recordAudit(db, {
+      await recordAudit(liveDb(), {
         actorUserId: userId,
         targetUserId: userId,
         action: AUDIT_ACTIONS.signupCompleted,
@@ -267,24 +280,40 @@ export function createSendStackApp(env: ServerEnv, options: CreateAppOptions = {
   });
 
   app.all("/api/auth/*", async (c) => {
-    const outcome = await captureDatabaseFailures(async () => {
-      const response = await auth.handler(c.req.raw);
-      return { response, failure: peekDatabaseFailure() };
-    });
-    let response = outcome.response;
-    if (outcome.failure && response.status >= 500) {
-      console.error(
-        `[auth] infrastructure failure kind=${outcome.failure.kind} response=database_unavailable`,
+    let response: Response;
+    try {
+      const outcome = await withDatabaseDeadline(
+        () =>
+          captureDatabaseFailures(async () => {
+            const authResponse = await auth.handler(c.req.raw);
+            return { response: authResponse, failure: peekDatabaseFailure() };
+          }),
+        "auth",
       );
-      c.header("Cache-Control", "no-store");
-      response = c.json(
-        { error: "Database is temporarily unavailable.", code: "database_unavailable" },
-        503,
-      );
+      response = outcome.response;
+      if (outcome.failure && response.status >= 500) {
+        console.error(
+          `[auth] infrastructure failure kind=${outcome.failure.kind} response=database_unavailable`,
+        );
+        c.header("Cache-Control", "no-store");
+        response = c.json(
+          { error: "Database is temporarily unavailable.", code: "database_unavailable" },
+          503,
+        );
+      }
+    } catch (error) {
+      if (error instanceof DatabaseUnavailableError) {
+        const mapped = publicApiError(error);
+        console.error(mapped.log);
+        c.header("Cache-Control", "no-store");
+        response = c.json(mapped.body, mapped.status);
+      } else {
+        throw error;
+      }
     }
     try {
       await recordAuthHandlerAudit({
-        db,
+        db: liveDb(),
         path: c.req.path,
         method: c.req.method,
         status: response.status,

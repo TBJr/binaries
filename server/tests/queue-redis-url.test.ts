@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import { classifyRedisEndpoint, maskRedisUrl, summarizeRedisUrl } from "../queue/redis-url.js";
-import { buildBullmqRedisOptions, buildHealthRedisOptions } from "../queue/redis-connection-options.js";
+import {
+  buildApiRedisOptions,
+  buildBullmqRedisOptions,
+  buildHealthRedisOptions,
+} from "../queue/redis-connection-options.js";
 import {
   campaignDispatchBullmqJobId,
   emailProcessingBullmqJobId,
@@ -47,6 +51,19 @@ describe("redis URL helpers", () => {
     expect(options.enableOfflineQueue).toBe(false);
     expect(options.retryStrategy?.(1)).toBeNull();
     expect(options.reconnectOnError?.(new Error("ECONNRESET"))).toBe(false);
+  });
+
+  it("uses fail-fast options for API producers while workers keep null retries", () => {
+    const api = buildApiRedisOptions("rediss://default:secret@example.upstash.io:6379");
+    expect(api.tls).toEqual({});
+    expect(api.maxRetriesPerRequest).toBe(1);
+    expect(api.commandTimeout).toBe(3_000);
+    expect(api.enableOfflineQueue).toBe(false);
+    expect(api.retryStrategy?.(1)).toBeTypeOf("number");
+    expect(api.retryStrategy?.(4)).toBeNull();
+
+    const worker = buildBullmqRedisOptions("rediss://default:secret@example.upstash.io:6379");
+    expect(worker.maxRetriesPerRequest).toBeNull();
   });
 });
 
