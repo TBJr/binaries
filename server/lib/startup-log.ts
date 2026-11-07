@@ -42,3 +42,31 @@ export async function withDeadline<T>(work: Promise<T>, ms: number, fallback: T,
     if (timer) clearTimeout(timer);
   }
 }
+
+export class DeadlineExceededError extends Error {
+  readonly label: string;
+
+  constructor(label: string) {
+    super(`${label} timed out`);
+    this.name = "DeadlineExceededError";
+    this.label = label;
+  }
+}
+
+/** Reject when work does not settle before `ms` (used for request-path DB/auth). */
+export async function withRejectingDeadline<T>(work: Promise<T>, ms: number, label: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      work,
+      new Promise<T>((_resolve, reject) => {
+        timer = setTimeout(() => {
+          console.error(`[deadline] ${label} timed out after ${ms}ms`);
+          reject(new DeadlineExceededError(label));
+        }, ms);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}

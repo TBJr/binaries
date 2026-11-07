@@ -66,12 +66,20 @@ postgres.js takes `connect_timeout` in **seconds**. `DATABASE_CONNECT_TIMEOUT_MS
 | Setting | Local development | Production long-running | Vercel |
 | --- | --- | --- | --- |
 | Pool max | 10, or `DATABASE_POOL_MAX` (1–20) | 10, or `DATABASE_POOL_MAX` | 1 |
-| Connect timeout | 10s | 10s | 8s |
+| Connect timeout | 10s | 10s | 5s (capped) |
 | Idle timeout | 20s | driver default (no idle close) | 5s |
 | Max connection lifetime | 30 min | driver default | 5 min |
 | TCP keepalive | 30s | off | off |
+| `fetch_types` | default (`true`) | default (`true`) | `false` |
+| `max_pipeline` | default (`100`) | default (`100`) | `1` |
 
-There is no global statement timeout on the application pool. A global query timeout would cancel legitimate campaign and admin queries. The health probe uses its own 4 second statement timeout and a 5 second overall deadline.
+Vercel also sets connection GUCs (`statement_timeout`, `lock_timeout`) on the request pool. Those GUCs are best-effort through Neon’s transaction pooler and are not a substitute for application deadlines.
+
+Session, Better Auth, and API middleware DB work (account security + permission checks) use an **8 second rejecting deadline** via `withDatabaseDeadline`. On timeout the API returns **503** `database_unavailable` and calls `invalidateDbCache()` so the next `createDb()` opens a fresh socket instead of reusing a wedged connection. Middleware always reads `db` through `createDb(env)` after that invalidation.
+
+**Better Auth adapter note:** `server/auth/auth.ts` binds Drizzle once at module load. Ending the cached client aborts hung queries, but that module-held adapter may keep a stale handle until the Vercel isolate is recycled. Middleware and other `createDb()` callers recover on the next request; auth may keep failing fast with infrastructure errors until cold start. That is preferred over burning the full 120s function limit.
+
+The health probe uses its own short-lived client (`fetch_types: false`, 4s statement timeout) and a 5–6 second overall deadline — it never shares the request pool.
 
 ### Development network timeout
 

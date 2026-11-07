@@ -2,7 +2,13 @@ import { Redis } from "ioredis";
 
 import { safeErrorLabel } from "../lib/startup-log.js";
 import { loadQueueEnv } from "./configuration.js";
-import { buildBullmqRedisOptions, buildHealthRedisOptions } from "./redis-connection-options.js";
+import type { RedisOptions } from "ioredis";
+
+import {
+  buildApiRedisOptions,
+  buildBullmqRedisOptions,
+  buildHealthRedisOptions,
+} from "./redis-connection-options.js";
 import { maskRedisUrl } from "./redis-url.js";
 
 type RedisClient = Redis;
@@ -20,31 +26,34 @@ function attachSafeErrorLogging(client: RedisClient, label: string) {
   });
 }
 
-function createRedisClient(redisUrl: string, label: string): RedisClient {
-  const client = new Redis(redisUrl, buildBullmqRedisOptions(redisUrl));
+function createRedisClient(redisUrl: string, label: string, options: RedisOptions): RedisClient {
+  const client = new Redis(redisUrl, options);
   attachSafeErrorLogging(client, label);
   return client;
 }
 
+/** Shared connection for API enqueue/pause/resume — fail-fast options. */
 export function getRedisConnection(): RedisClient {
   const env = loadQueueEnv();
   if (!env.QUEUE_ENABLED || !env.REDIS_URL) {
     throw new Error("QUEUE_DISABLED");
   }
   if (!sharedConnection) {
-    sharedConnection = createRedisClient(env.REDIS_URL, "shared");
+    sharedConnection = createRedisClient(env.REDIS_URL, "shared", buildApiRedisOptions(env.REDIS_URL));
   }
   return sharedConnection;
 }
 
 /**
- * BullMQ workers should use a dedicated connection (duplicate) for blocking commands.
+ * BullMQ workers need a dedicated blocking connection with worker Redis options
+ * (not a duplicate of the fail-fast API client).
  */
 export function getWorkerRedisConnection(): RedisClient {
-  const parent = getRedisConnection();
-  const duplicate = parent.duplicate();
-  attachSafeErrorLogging(duplicate, "worker");
-  return duplicate;
+  const env = loadQueueEnv();
+  if (!env.QUEUE_ENABLED || !env.REDIS_URL) {
+    throw new Error("QUEUE_DISABLED");
+  }
+  return createRedisClient(env.REDIS_URL, "worker", buildBullmqRedisOptions(env.REDIS_URL));
 }
 
 export function describeRedisTarget() {
