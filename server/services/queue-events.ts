@@ -10,6 +10,8 @@ export type QueueEventType =
   | "job_processing_started"
   | "job_simulation_completed"
   | "job_simulation_failed"
+  | "job_delivered"
+  | "job_send_failed"
   | "job_skipped"
   | "job_cancelled"
   | "campaign_paused"

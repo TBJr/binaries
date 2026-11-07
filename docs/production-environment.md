@@ -1,6 +1,6 @@
 # Production environment (Binaries.nl v0.1.0)
 
-Phase **7.5** deployment reference for Vercel (SPA + Hono API) and Railway (BullMQ worker + campaign dispatcher). Campaign delivery remains **simulation-only** (`QUEUE_SIMULATION_ONLY=true`).
+Phase **8** deployment reference for Vercel (SPA + Hono API) and Railway (BullMQ worker + campaign dispatcher). Campaign delivery can run in **simulation** (`QUEUE_SIMULATION_ONLY=true`) or **live** mode (`false`) with a daily send cap.
 
 ## Where to configure variables
 
@@ -41,13 +41,14 @@ Never prefix secrets with `VITE_`.
 | `DATABASE_CONNECT_TIMEOUT_MS` | TCP connect timeout | Optional | Shared | No | Rounded up to seconds. Default `10000` long-running, `8000` on Vercel. |
 | `REDIS_URL` | BullMQ/ioredis connection | Required if `QUEUE_ENABLED=true` | Shared | **Yes** | `redis://` or `rediss://` only — not Upstash REST HTTPS URL. Production should use `rediss://`. |
 | `QUEUE_ENABLED` | Enable queue features | Optional (default `false`) | Vercel API + Railway | No | Set `true` when Redis is configured. Railway worker/dispatcher exit if `false`. |
-| `QUEUE_SIMULATION_ONLY` | Phase 7 safety guard | **Required** | Vercel API + Railway | No | **Must be `true`.** Schema rejects `false`. |
+| `QUEUE_SIMULATION_ONLY` | Simulation vs live campaign delivery | **Required** | Vercel API + Railway | No | `true` = simulate only. `false` = real Resend/SMTP sends on the worker. |
+| `QUEUE_DAILY_SEND_CAP` | Hard stop before provider call | Optional | Railway worker | No | Default `2000` accepted sends per UTC day (namespace-wide Redis counter). |
 | `QUEUE_NAMESPACE` | BullMQ queue name prefix | Optional | Shared | No | Default `kivorenta` → `{namespace}-campaign-dispatch` and `{namespace}-email-processing`. |
 | `QUEUE_WORKER_CONCURRENCY` | Worker parallelism | Optional | Railway worker | No | Default `2`. |
-| `QUEUE_MAX_JOBS_PER_SECOND` | Rate limit | Optional | Railway worker | No | Default `5`. |
+| `QUEUE_MAX_JOBS_PER_SECOND` | Rate limit | Optional | Railway worker | No | Default `5`. Prefer `1`–`2` for live delivery. |
 | `QUEUE_MAX_ATTEMPTS` | Job retry cap | Optional | Vercel API, Railway | No | Default `3`. |
 | `QUEUE_JOB_RETENTION_DAYS` | BullMQ retention | Optional | Vercel API, Railway | No | Default `7`. |
-| `QUEUE_SIMULATION_DELAY_MS` | Simulated send delay | Optional | Railway worker | No | Default `25`. |
+| `QUEUE_SIMULATION_DELAY_MS` | Simulated send delay | Optional | Railway worker | No | Default `25`. Ignored for live delivery. |
 | `SPACEMAIL_IMAP_HOST` | Incoming mailbox IMAP host | Required for mailbox features | Vercel API | No | Must be `mail.spacemail.com`; Resend does not provide inbox/IMAP access. |
 | `SPACEMAIL_IMAP_PORT` | IMAP port | Required for mailbox | Vercel API | No | `993` with `SPACEMAIL_IMAP_SECURE=true`. |
 | `SPACEMAIL_IMAP_SECURE` | IMAP TLS | Required for mailbox | Vercel API | No | |
@@ -80,7 +81,7 @@ All of **server core** from `server/env.ts`, plus queue vars if campaigns/queue 
 
 - `DATABASE_URL`, `BETTER_AUTH_SECRET`, `BETTER_AUTH_URL`, `FRONTEND_URL`
 - `AUTH_EMAIL_DELIVERY`, `RESEND_*` (when using Resend for auth mail)
-- `QUEUE_ENABLED`, `QUEUE_SIMULATION_ONLY`, `REDIS_URL`, `QUEUE_NAMESPACE`
+- `QUEUE_ENABLED`, `QUEUE_SIMULATION_ONLY`, `QUEUE_DAILY_SEND_CAP`, `REDIS_URL`, `QUEUE_NAMESPACE`
 - `RESEND_*` for outbound Resend mail; `SMTP_*` to enable Spacemail SMTP selection; `SPACEMAIL_IMAP_*`, `SPACEMAIL_EMAIL`, `SPACEMAIL_PASSWORD` only for inbox and sent-folder access.
 - `APP_NAME`, `APP_COMPANY_NAME` (optional)
 
@@ -91,28 +92,29 @@ BullMQ **workers do not run inside Vercel Functions**; enqueue/API operations us
 `loadEnv()` + `loadQueueEnv()` — same **shared** credentials as API:
 
 - `DATABASE_URL`, `BETTER_AUTH_SECRET`, `BETTER_AUTH_URL`, `FRONTEND_URL`
-- `AUTH_EMAIL_DELIVERY` and its selected provider variables (required by schema even though worker does not send auth mail)
-- `QUEUE_ENABLED=true`, `QUEUE_SIMULATION_ONLY=true`, `REDIS_URL`, `QUEUE_NAMESPACE`
-- Optional queue tuning vars
+- `AUTH_EMAIL_DELIVERY` and its selected provider variables
+- `QUEUE_ENABLED=true`, `REDIS_URL`, `QUEUE_NAMESPACE`
+- For **live** delivery: `QUEUE_SIMULATION_ONLY=false`, `QUEUE_DAILY_SEND_CAP=2000`, `QUEUE_MAX_JOBS_PER_SECOND=2`, plus `RESEND_API_KEY` + `RESEND_FROM_EMAIL` (or SMTP_*)
+- For **simulation**: `QUEUE_SIMULATION_ONLY=true` (no outbound mail required on the worker)
 
-Does **not** need `VITE_*` or `SPACEMAIL_*` for simulation processing.
+Does **not** need `VITE_*`. `SPACEMAIL_*` only if IMAP sent-copy is required (not used for campaign bulk).
 
 ### Railway — campaign dispatcher
 
-Same as worker (no `SPACEMAIL_*` required for dispatch/simulation).
+Same as worker for queue/Redis. Does not send mail itself.
 
 ## Deployment compatibility notes
 
 | Area | Status / notes |
 | --- | --- |
-| Hono on Vercel | `vercel.json` rewrites `/api/*` → `api/index.ts` (Node runtime, 30s max). |
+| Hono on Vercel | `vercel.json` rewrites `/api/*` → `api/index.ts` (Node runtime, 120s max). |
 | Better Auth | `basePath` `/api/auth`; production cookies `secure` + `httpOnly` + `sameSite=lax`. |
 | CORS | Allowed browser origins from `authTrustedOrigins(FRONTEND_URL)`. |
 | PostgreSQL | `postgres` driver with serverless-friendly pooling when `VERCEL` is set. |
 | Redis | Required for queue enqueue/status when `QUEUE_ENABLED=true`. |
-| IMAP | Runs in API handlers; subject to serverless timeouts (30s) — large mailboxes may need pagination limits in app code. |
-| Individual send | Uses Resend; allowlist enforced in `assertAuthorizedParties`. |
-| Campaign send | Simulation only while `QUEUE_SIMULATION_ONLY=true` (enforced in `queueEnvSchema`). |
+| IMAP | Runs in API handlers; subject to serverless timeouts — large mailboxes may need pagination limits in app code. |
+| Individual / test send | Uses Resend; Settings test-list stays small and sync on Vercel. |
+| Campaign send | Simulation when `QUEUE_SIMULATION_ONLY=true`; live BullMQ delivery when `false`. |
 
 ## Validation
 
@@ -130,5 +132,6 @@ npm run env:check -- --production --file=.env.production
 - [ ] `.env.production.example` contains no secrets (safe to commit).
 - [ ] No secrets in `docs/` or `VITE_*` variables.
 - [ ] Production URLs use HTTPS and align across `VITE_APP_URL`, `FRONTEND_URL`, `BETTER_AUTH_URL`.
-- [ ] `QUEUE_SIMULATION_ONLY=true` in Vercel and Railway.
+- [ ] `QUEUE_SIMULATION_ONLY` intentionally set (`true` for dry-run, `false` only when worker has mail credentials + daily cap).
+- [ ] Migration `0015_campaign_delivery_statuses` applied before enabling live delivery.
 - [ ] Development `.env` credentials are not copied to production without a deliberate rotation strategy.

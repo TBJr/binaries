@@ -47,14 +47,18 @@ export function QueueJobDetailsPage() {
     <>
       <PageMeta
         title="Queue job | Binaries.nl"
-        description="Simulation job details."
+        description="Campaign queue job details."
         canonicalPath={`/app/queue/jobs/${jobId}/`}
       />
       <AppPageContainer>
         <PageHeader
           className="mb-4"
-          title="Simulation job"
-          description="Processing details (no email was sent)."
+          title="Queue job"
+          description={
+            job?.status === "delivered" || job?.status === "send_failed"
+              ? "Live delivery job details."
+              : "Processing details for this queue job."
+          }
           actions={<Button asChild variant="outline"><Link to="/app/queue/">Back to queue</Link></Button>}
         />
         {error && <p className="text-sm text-destructive">{error}</p>}
@@ -70,10 +74,11 @@ export function QueueJobDetailsPage() {
               <p>Campaign: <Link className="underline" to={`/app/campaigns/${job.campaignId}/`}>{job.campaignId}</Link></p>
               <p className="break-all">Recipient: {email ?? "—"}</p>
               <p>Attempts: {job.attemptCount}/{job.maxAttempts}</p>
+              {job.providerMessageId ? <p className="break-all">Provider message id: {job.providerMessageId}</p> : null}
               {job.lastErrorMessage && <p className="text-destructive">Last error: {job.lastErrorMessage}</p>}
               {job.skipReason && <p>Skip reason: {job.skipReason}</p>}
-              {["simulation_failed", "retry_wait"].includes(job.status) && (
-                <Button size="sm" variant="outline" onClick={retry}>Retry simulation</Button>
+              {["simulation_failed", "send_failed", "retry_wait"].includes(job.status) && (
+                <Button size="sm" variant="outline" onClick={retry}>Retry job</Button>
               )}
             </CardContent>
           </Card>

@@ -193,11 +193,11 @@ describe("admin authorization", () => {
     expect(metadata).not.toHaveProperty("newPassword");
   });
 
-  it("keeps the campaign queue simulation-only", () => {
+  it("allows live campaign delivery when simulation-only is disabled", () => {
     expect(queueEnvSchema.safeParse({
       QUEUE_ENABLED: "true",
       QUEUE_SIMULATION_ONLY: "false",
       REDIS_URL: "redis://127.0.0.1:6379",
-    }).success).toBe(false);
+    }).success).toBe(true);
   });
 });

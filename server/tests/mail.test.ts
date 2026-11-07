@@ -226,13 +226,14 @@ describe("mailbox safety", () => {
     expect(messagePageRange(45, 4, 20)).toBeNull();
   });
 
-  it("keeps campaign queue processing simulation-only", () => {
+  it("allows live campaign delivery when simulation-only is disabled", () => {
     const parsed = queueEnvSchema.safeParse({
       QUEUE_ENABLED: "true",
       QUEUE_SIMULATION_ONLY: "false",
       REDIS_URL: "redis://127.0.0.1:6379",
     });
-    expect(parsed.success).toBe(false);
+    expect(parsed.success).toBe(true);
+    if (parsed.success) expect(parsed.data.QUEUE_SIMULATION_ONLY).toBe(false);
   });
 
   it("shows inbox and sent only for mailbox permission", () => {

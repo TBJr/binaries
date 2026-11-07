@@ -14,11 +14,15 @@ import {
 import type { EmailProcessingJobData } from "../queue/job-types.js";
 import { closeQueues } from "../queue/queues.js";
 import {
+  deliverCampaignJob,
+  persistDeliveryOutcome,
+} from "../services/campaign-delivery-processor.js";
+import {
   persistSimulationOutcome,
   simulateDeliveryJob,
 } from "../services/simulation-processor.js";
 import { recordQueueEvent } from "../services/queue-events.js";
-import { updateCampaignSimulationProgress } from "../services/queue-service.js";
+import { updateCampaignDeliveryProgress } from "../services/queue-service.js";
 
 const env = loadEnv();
 const queueEnv = loadQueueEnv();
@@ -52,15 +56,23 @@ async function processJob(deliveryJobId: string) {
   });
 
   try {
-    const result = await simulateDeliveryJob(db, deliveryJobId);
-    await persistSimulationOutcome(db, deliveryJobId, result, attemptNumber);
+    if (queueEnv.QUEUE_SIMULATION_ONLY) {
+      const result = await simulateDeliveryJob(db, deliveryJobId);
+      await persistSimulationOutcome(db, deliveryJobId, result, attemptNumber);
+    } else {
+      const result = await deliverCampaignJob(db, deliveryJobId);
+      await persistDeliveryOutcome(db, deliveryJobId, result, attemptNumber);
+    }
   } catch (error) {
-    if (error instanceof Error && error.message === "SIMULATION_RETRY") {
+    if (
+      error instanceof Error &&
+      (error.message === "SIMULATION_RETRY" || error.message === "DELIVERY_RETRY")
+    ) {
       throw error;
     }
     throw error;
   }
-  await updateCampaignSimulationProgress(db, job.campaignId);
+  await updateCampaignDeliveryProgress(db, job.campaignId);
 }
 
 function startWorker() {
@@ -102,7 +114,9 @@ if (!queueEnv.QUEUE_ENABLED) {
 }
 
 startWorker();
-console.info("[worker:email-processing] listening");
+console.info(
+  `[worker:email-processing] listening mode=${queueEnv.QUEUE_SIMULATION_ONLY ? "simulation" : "delivery"}`,
+);
 
 process.on("SIGINT", () => shutdown("SIGINT"));
 process.on("SIGTERM", () => shutdown("SIGTERM"));

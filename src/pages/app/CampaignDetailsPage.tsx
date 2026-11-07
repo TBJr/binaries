@@ -30,6 +30,7 @@ export function CampaignDetailsPage() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [queueEnabled, setQueueEnabled] = useState(false);
+  const [simulationOnly, setSimulationOnly] = useState(true);
 
   const load = useCallback(() => {
     if (!campaignId) return;
@@ -49,7 +50,10 @@ export function CampaignDetailsPage() {
   useEffect(() => {
     load();
     fetchQueueOverview()
-      .then((res) => setQueueEnabled(res.queueEnabled))
+      .then((res) => {
+        setQueueEnabled(res.queueEnabled);
+        setSimulationOnly(res.simulationOnly);
+      })
       .catch(() => setQueueEnabled(false));
   }, [load]);
 
@@ -163,10 +167,15 @@ export function CampaignDetailsPage() {
             </Card>
             <Card className="lg:col-span-2">
               <CardHeader>
-                <CardTitle>Simulation queue</CardTitle>
+                <CardTitle>{simulationOnly ? "Simulation queue" : "Delivery queue"}</CardTitle>
               </CardHeader>
               <CardContent>
-                <CampaignQueueActions campaign={campaign} queueEnabled={queueEnabled} onUpdated={load} />
+                <CampaignQueueActions
+                  campaign={campaign}
+                  queueEnabled={queueEnabled}
+                  simulationOnly={simulationOnly}
+                  onUpdated={load}
+                />
               </CardContent>
             </Card>
             <Card className="lg:col-span-2">

@@ -22,6 +22,8 @@ export const DELIVERY_JOB_STATUSES = [
   "retry_wait",
   "simulation_completed",
   "simulation_failed",
+  "delivered",
+  "send_failed",
   "skipped",
   "cancelled",
 ] as const;
@@ -30,13 +32,21 @@ export type DeliveryJobStatus = (typeof DELIVERY_JOB_STATUSES)[number];
 
 export const queueEnvSchema = z
   .object({
-    QUEUE_ENABLED: z.coerce.boolean().default(false),
+    QUEUE_ENABLED: z
+      .preprocess((value) => {
+        if (value === undefined || value === "") return false;
+        if (value === false || value === "false" || value === "0") return false;
+        if (value === true || value === "true" || value === "1") return true;
+        return Boolean(value);
+      }, z.boolean())
+      .default(false),
     QUEUE_SIMULATION_ONLY: z
       .preprocess((value) => {
         if (value === undefined || value === "") return true;
         if (value === false || value === "false" || value === "0") return false;
+        if (value === true || value === "true" || value === "1") return true;
         return true;
-      }, z.literal(true))
+      }, z.boolean())
       .default(true),
     REDIS_URL: z.string().optional(),
     QUEUE_WORKER_CONCURRENCY: z.coerce.number().int().min(1).max(50).default(2),
@@ -44,16 +54,10 @@ export const queueEnvSchema = z
     QUEUE_MAX_ATTEMPTS: z.coerce.number().int().min(1).max(20).default(3),
     QUEUE_JOB_RETENTION_DAYS: z.coerce.number().int().min(1).max(90).default(7),
     QUEUE_SIMULATION_DELAY_MS: z.coerce.number().int().min(0).max(5000).default(25),
+    QUEUE_DAILY_SEND_CAP: z.coerce.number().int().min(1).max(1_000_000).default(2000),
     QUEUE_NAMESPACE: z.string().max(40).default("kivorenta"),
   })
   .superRefine((data, ctx) => {
-    if (!data.QUEUE_SIMULATION_ONLY) {
-      ctx.addIssue({
-        code: "custom",
-        message: "QUEUE_SIMULATION_ONLY must remain true in Phase 7",
-        path: ["QUEUE_SIMULATION_ONLY"],
-      });
-    }
     if (data.QUEUE_ENABLED && !data.REDIS_URL?.trim()) {
       ctx.addIssue({
         code: "custom",
@@ -91,4 +95,14 @@ export function getQueueNames(env: QueueEnv = loadQueueEnv()): QueueNamePair {
 
 export function bullmqJobRetentionMs(days: number) {
   return days * 24 * 60 * 60 * 1000;
+}
+
+/** Stable Resend/SMTP idempotency key for a delivery job (must not change across retries). */
+export function campaignDeliveryIdempotencyKey(deliveryJobId: string) {
+  return `campaign-delivery:${deliveryJobId}`;
+}
+
+export function dailySendCapRedisKey(namespace: string, utcDate = new Date()) {
+  const day = utcDate.toISOString().slice(0, 10);
+  return `${namespace.trim() || "kivorenta"}:daily-sends:${day}`;
 }

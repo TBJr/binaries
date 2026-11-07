@@ -15,7 +15,7 @@ A modern email management platform built with React, TypeScript, and Hono, featu
 - Roles and permissions with administrative audit log
 - Contacts, lists, CSV import, suppressions, campaigns (queue simulation — no live bulk sending by default)
 - Resend outbound mail with Spacemail IMAP inbox access
-- BullMQ queue infrastructure (simulation-only guard)
+- BullMQ queue infrastructure (simulation or live campaign delivery)
 
 ## Technology stack
 
@@ -110,7 +110,7 @@ Key groups:
 | Branding | `APP_NAME`, `APP_COMPANY_NAME`, `VITE_APP_URL`, `VITE_CONTACT_EMAIL` |
 | Auth | `BETTER_AUTH_SECRET`, `BETTER_AUTH_URL`, `FRONTEND_URL`, `AUTH_EMAIL_DELIVERY`, `RESEND_*` |
 | Database | `DATABASE_URL` |
-| Queue | `QUEUE_ENABLED`, `QUEUE_SIMULATION_ONLY`, `REDIS_URL`, `QUEUE_NAMESPACE` |
+| Queue | `QUEUE_ENABLED`, `QUEUE_SIMULATION_ONLY`, `QUEUE_DAILY_SEND_CAP`, `REDIS_URL`, `QUEUE_NAMESPACE` |
 | Mailbox | `RESEND_*`, optional `SMTP_*` provider, optional `SPACEMAIL_IMAP_*` mailbox, optional `MAIL_TEST_RECIPIENTS` |
 
 `BETTER_AUTH_URL` and `FRONTEND_URL` must match the origin users visit. Trusted origins include apex/www pairs for public domains.
@@ -133,7 +133,7 @@ Optional until you enable queues:
 
 1. Create a **new** Redis instance (e.g. Upstash TCP URL `rediss://…`).
 2. Set `REDIS_URL` and `QUEUE_ENABLED=true` on workers/dispatcher hosts.
-3. Keep `QUEUE_SIMULATION_ONLY=true` unless you intentionally change sending policy.
+3. Keep `QUEUE_SIMULATION_ONLY=true` for dry runs. For live delivery set `false`, put `RESEND_*` (or SMTP) on the Railway worker, and set `QUEUE_DAILY_SEND_CAP` (default 2000).
 
 Queue names default to `{QUEUE_NAMESPACE}-campaign-dispatch` and `{QUEUE_NAMESPACE}-email-processing` (default namespace: `kivorenta`).
 
@@ -167,7 +167,7 @@ After deploy, `GET /api/health` should return a JSON service response, not HTML.
 
 ## Known limitations
 
-- Campaign delivery remains simulation-only while `QUEUE_SIMULATION_ONLY=true`.
+- Campaign delivery is simulation-only while `QUEUE_SIMULATION_ONLY=true`; set `false` for Phase 8 live sending via BullMQ workers.
 - Legal pages are operator placeholders — obtain counsel-approved text before commercial use.
 - Logo/imagery: typographic wordmark until approved brand assets exist.
 

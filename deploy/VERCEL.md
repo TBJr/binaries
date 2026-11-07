@@ -38,7 +38,8 @@ Set these in the Vercel project (Production and Preview as needed):
 | `BETTER_AUTH_URL` | Yes | `https://your-domain.example` |
 | `FRONTEND_URL` | Yes | Same public origin as the SPA |
 | `VITE_APP_URL` | Yes (build) | Same origin — used at build time for canonical URLs; auth requests use the current page origin |
-| `QUEUE_SIMULATION_ONLY` | Yes | `true` (keep simulation-only) |
+| `QUEUE_SIMULATION_ONLY` | Yes | `true` for simulation; `false` for Phase 8 live campaign delivery |
+| `QUEUE_DAILY_SEND_CAP` | Optional | Default `2000` (enforced on worker for live sends) |
 | `QUEUE_ENABLED` | Optional | `false` until Redis is configured |
 | `REDIS_URL` | If queues enabled | New Upstash / Redis instance |
 
@@ -50,7 +51,7 @@ The Mailbox settings page lets a super admin select the active provider for all 
 
 Resend outbound messages use its HTTPS API, not SMTP, to avoid SMTP egress and long connection stalls in serverless functions. Spacemail remains an SMTP option.
 
-Apply database migrations with `npm run db:migrate` before deploying a build that includes a new migration. Migration `0014_mail_delivery_settings` stores the active provider selection.
+Apply database migrations with `npm run db:migrate` before deploying a build that includes a new migration. Migration `0014_mail_delivery_settings` stores the active provider selection. Migration `0015_campaign_delivery_statuses` adds `delivered` / `send_failed` job statuses for live campaign delivery.
 
 ## Build settings
 
