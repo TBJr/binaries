@@ -50,23 +50,31 @@ export function createDb(env: DbEnv, options?: { cache?: boolean }) {
 
   const max = serverless ? 1 : (env.DATABASE_POOL_MAX ?? 10);
   const development = env.NODE_ENV === "development" && !serverless;
+  // max_pipeline is a runtime postgres.js option (not in published typings).
+  // Neon transaction pooler + default pipeline depth can hang indefinitely on Vercel.
+  const serverlessPoolOptions = {
+    idle_timeout: 5,
+    max_lifetime: 60 * 5,
+    fetch_types: false,
+    max_pipeline: 1,
+  };
   const client = postgres(env.DATABASE_URL, {
     max,
     prepare: false,
     connect_timeout: connectTimeoutSec,
-    ...(serverless ? { idle_timeout: 5, max_lifetime: 60 * 5 } : {}),
+    ...(serverless ? serverlessPoolOptions : {}),
     ...(development ? { idle_timeout: 20, max_lifetime: 60 * 30, keep_alive: 30 } : {}),
     connection: {
       application_name: serverless ? "kivorenta-vercel" : "kivorenta",
       ...(serverless
         ? {
-          statement_timeout: 5_000,
-          lock_timeout: 3_000,
+            statement_timeout: 5_000,
+            lock_timeout: 3_000,
             idle_in_transaction_session_timeout: 20_000,
           }
         : {}),
     },
-  });
+  } as Parameters<typeof postgres>[1]);
 
   const originalEnd = client.end.bind(client);
   client.end = ((endOptions?: Parameters<typeof client.end>[0]) => {
@@ -91,6 +99,17 @@ export async function closeDb() {
   globalForDb.kivorentaDb = undefined;
   if (!bundle) return;
   await bundle.client.end({ timeout: 5 });
+}
+
+/**
+ * Drop the cached request pool after a stuck/timed-out query so the next
+ * request opens a fresh socket instead of reusing a wedged Neon connection.
+ */
+export function invalidateDbCache() {
+  const bundle = globalForDb.kivorentaDb;
+  globalForDb.kivorentaDb = undefined;
+  if (!bundle) return;
+  void bundle.client.end({ timeout: 0 }).catch(() => undefined);
 }
 
 export type Database = ReturnType<typeof createDb>["db"];

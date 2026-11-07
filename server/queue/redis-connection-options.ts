@@ -26,6 +26,24 @@ export function buildBullmqRedisOptions(redisUrl: string): RedisOptions {
 }
 
 /**
+ * Vercel/API Queue producers must fail fast. Workers keep
+ * `maxRetriesPerRequest: null` via `buildBullmqRedisOptions`.
+ */
+export function buildApiRedisOptions(redisUrl: string): RedisOptions {
+  return {
+    ...buildBullmqRedisOptions(redisUrl),
+    maxRetriesPerRequest: 1,
+    connectTimeout: 10_000,
+    commandTimeout: 3_000,
+    enableOfflineQueue: false,
+    retryStrategy(times) {
+      if (times > 3) return null;
+      return Math.min(200 * times, 1_000);
+    },
+  };
+}
+
+/**
  * Request-scoped Redis options. Unlike BullMQ workers, health checks must not
  * retry forever or block the Node response until the function limit.
  */
